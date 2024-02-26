@@ -1,0 +1,3827 @@
+---
+title: "Code for MRes Project 1"
+output:
+  html_document:
+    keep_md: yes
+date: "2024-02-26"
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(dev = "jpg",
+                      echo = TRUE)
+```
+
+```{r packages, include = FALSE}
+library(odin)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(MetBrewer)
+library(scales)
+library(ggthemes)
+library(pkgbuild)
+library(patchwork)
+library(rootSolve)
+```
+
+```{r get params, echo = FALSE}
+
+integ_grid <- rep(NA, 101^3)
+
+f1 <- function(x) a + b*exp(-c*(x-5))
+f2 <- function(x) 5.947*((0.13*x - 0.35)/(0.0037*(x-5)))^(1/4.08) - 9.064
+f3 <- function(x) (5.947*((0.13*x - 0.35)/(0.0037*(x-5)))^(1/4.08) - 9.064 - (a + b*exp(-c*(x-5))))^2
+
+a_grid <- rep(seq(0,10,0.1), each = 101^2, times = 1)
+b_grid <- rep(seq(0,10,0.1), each = 101, times = 101)
+c_grid <- rep(seq(0,1,0.01), each = 1, times = 101^2)
+integ_grid <- rep(NA, 101^3)
+
+for(i in 1:101){
+  for(j in 1:101){
+    for(k in 1:101){
+      print(paste0("Progress: ", round(((i-1)*101^2 + (j-1)*101 + k)/101^3, digits = 3)*100, "%"))
+      a = (i-1)/10
+      b = (j-1)/10
+      c = (k-1)/100
+      integ_grid[(i-1)*101^2 + (j-1)*101 + k] <- integrate(f = f3, lower = 5.7, upper = 25)$value
+    }
+  }
+}
+
+approximator <- as.data.frame(cbind(a_grid, b_grid, c_grid, integ_grid))
+approximator <- approximator %>% mutate(L2 = sqrt(integ_grid))
+
+approximator %>% slice(which.min(L2))
+
+```
+
+```{r functions}
+
+period_average_calculator <- function(data, i, method, tolerance){
+  
+  j = dim(data)[1]
+  
+  if(data[(j-1), i] > data[j, i]){
+    
+    while(data[(j-1),(i)] > data[j,(i)]){
+      j = j-1}
+    
+    k = j
+    
+    while(data[(k-1),(i)] < data[k,(i)]){
+      k = k-1}
+    
+    l = k
+  
+    while(data[(l-1),(i)] > data[l,(i)]){
+      l = l-1}
+    
+    m = l
+    
+    while(data[(m-1),(i)] < data[m,(i)]){
+      m = m-1}
+    
+    n = m
+    
+    while(data[(n-1),(i)] > data[n,(i)]){
+      n = n-1}
+
+    
+    if(n >1000 && abs(data[n, i] - data[j, i])/data[j, i] < tolerance){
+      if(method == "mean"){if(n < j){
+        p <- mean(data[(n+1):j,i])} else {p <- data[dim(data)[1],i]}}
+      else if(method == "median"){ if(n < j){
+        p <- median(data[(n+1):j,i])} else {p <- data[dim(data)[1],i]}}
+      else {print("No Method")}}
+  else{p <- NA}
+  }
+  
+  else {
+    while(data[(j-1),(i)] < data[j,(i)]){
+      j = j-1}
+    
+    k = j
+    
+    while(data[(k-1),(i)] > data[k,(i)]){
+      k = k-1}
+    
+    l = k
+    
+    while(data[(l-1),(i)] < data[l,(i)]){
+      l = l-1}
+    
+    m = l
+    
+    while(data[(m-1),(i)] > data[m,(i)]){
+      m = m-1}
+    
+    n = m
+    
+    while(data[(n-1),(i)] < data[n,(i)]){
+      n = n-1}
+    
+    o = n
+    
+    while(data[(o-1),(i)] > data[o,(i)]){
+      o = o-1}
+
+    
+    if(o >1000 && abs(data[o, i] - data[k, i])/data[k, i] < tolerance){
+      if(method == "mean"){if(o < k){
+        p <- mean(data[(o+1):k,i])} else {p <- data[dim(data)[1],i]}}
+      else if(method == "median"){ if(o < k){
+        p <- median(data[(o+1):k,i])} else {p <- data[dim(data)[1],i]}}
+      else {print("No Method")}}
+    else{p <- NA}
+  }
+  p}
+  
+
+find_tau_L <- function(kappa,lambda,mu_L,eta,mu_N,mu_P,tau_P){
+  f <- function (x) kappa*exp(-(lambda + mu_L)*x + 5*lambda) + eta*exp(-mu_L*x) - mu_N*(1 + mu_P*tau_P)
+  uniroot(f, c(0,1000), tol = 1e-50)}
+
+test_variable_ddf_5 <- function(variable, min, max, by, average_method, 
+                                mul = 0.248, length = 18250, tolerance = 0.005) {
+  if (variable == "eta_kappa"){
+    modi <- seq(min, max, by)*(5.7+6.2)
+  }
+  else{
+  modi <- seq(min, max, by)
+  }
+  L_grid <- rep(NA, length(modi))
+  P_grid <- rep(NA, length(modi))
+  N_grid <- rep(NA, length(modi))
+  F_grid <- rep(NA, length(modi))
+  t_grid <- rep(NA, length(modi))
+  wl_grid <- rep(NA, length(modi))
+  fec_grid <- rep(NA, length(modi))
+  sur_grid <- rep(NA, length(modi))
+  c_grid <- rep(NA, length(modi))
+  for (k in 1:length(modi)) {
+    out <- numeric(length(modi))
+    
+    mod <- odin::odin({
+      deriv(F) <- G_0 - A_max * L * F / (K_F + F)
+  
+  N_lag_n <- delay(N, tau_L)
+  F_lag_n <- delay(F, tau_L)
+  tau_lag_n <- delay(tau_L, tau_P)
+  tau_lag_2n <- delay(tau_L, tau_L + tau_P)
+  N_lag <- if (t - tau_L <= 0)
+    N_0
+  else
+    N_lag_n
+  F_lag <- if (t - tau_L <= 0)
+    F_0
+  else
+    F_lag_n
+  tau_lag <-
+    if (t - tau_P <= 0)
+      (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  else
+    tau_lag_n
+  tau_lag_2 <-
+    if (t - tau_L - tau_P <= 0)
+      (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  else
+    tau_lag_2n
+  
+  
+  deriv(L) <-
+    (eta + kappa * exp(-lambda * (tau_lag - 5))) * N -  (eta + kappa * exp(-lambda *
+                                                                       (tau_lag_2 - 5))) * N_lag * exp(-mu_L * tau_L) * F * (K_F + F_lag) / (F_lag *
+                                                                                                                                         (K_F + F)) - mu_L * L
+  deriv(P) <-
+    (eta + kappa * exp(-lambda * (tau_lag_2 - 5))) * N_lag * exp(-mu_L * tau_L) *
+    F * (K_F + F_lag) / (F_lag * (K_F + F)) - P / tau_P - mu_P * P
+  
+  deriv(N) <- I_N + P / tau_P - mu_N * N
+  deriv(tau_L) <- 1 - F * (K_F + F_lag) / (F_lag * (K_F + F))
+  output(dev) <- tau_lag
+  output(wl) <- ((0.13 * tau_lag - 0.35) / (0.0037 * (tau_lag  - 5))) ^ (1 /
+                                                                              4.08)
+  output(fec) <- eta + kappa * exp(-lambda * (tau_lag - 5))
+  output(sur) <- exp(-mu_L*tau_L)
+  
+  I_N <- if (t <= 0)
+    0
+  else if (0 < t && t <= T_1)
+    J_1
+  else
+    0
+  
+  initial(F) <- F_0
+  initial(L) <- L_0
+  initial(P) <- P_0
+  initial(N) <- N_0
+  initial(tau_L) <- (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  
+  G_0 <- user(200)
+  A_max <- user(0.3)
+  K_F <- user(10)
+  mu_L <- user(0.248)
+  mu_P <- user(0.395)
+  mu_N <- user(0.091)
+  tau_P <- user(1)
+ kappa <- user(6.2)
+ lambda <- user(0.42)
+  eta <- user(5.7)
+  mpovgamma <- user(1.5)
+  
+  F_0 <- user(20)
+  T_1 <- user(0.001)
+  J_1 <- user(100000)
+  L_0 <- user(0)
+  P_0 <- user(0)
+  N_0 <- user(0)
+      
+    })
+    
+    t <- seq(0, length, length.out = length+1)
+    mod_1 <- mod$new()
+    mod_1$set_user(mu_L = mul)
+    
+    if (variable == "K_F") {
+      mod_1$set_user(K_F =(((k - 1) * by) + min))
+    }
+    else if (variable == "G_0") {
+      mod_1$set_user(G_0 = (((k - 1) * by) + min))
+    }
+    else if (variable == "A_max") {
+      mod_1$set_user(A_max = (((k - 1) * by) + min))
+    }
+    else if (variable == "mu_L") {
+      mod_1$set_user(mu_L = (((k - 1) * by) + min))
+    }
+    else if (variable == "mu_P") {
+      mod_1$set_user(mu_P = (((k - 1) * by) + min))
+    }
+    else if (variable == "mu_N") {
+      mod_1$set_user(mu_N = (((k - 1) * by) + min))
+    }
+    else if (variable == "tau_P") {
+      mod_1$set_user(tau_P = (((k - 1) * by) + min))
+    }
+    else if (variable == "mpovgamma") {
+      mod_1$set_user(mpovgamma = (((k - 1) * by) + min))
+    }
+    else if (variable == "eta") {
+      mod_1$set_user(eta = (((k - 1) * by) + min))
+    }
+    else if (variable == "kappa") {
+      mod_1$set_user(kappa = (((k - 1) * by) + min))
+    }
+    else if (variable == "lambda") {
+      mod_1$set_user(lambda = (((k - 1) * by) + min))
+    }
+    else if (variable == "eta_kappa"){
+      mod_1$set_user(eta = (((k - 1) * by) + min)*5.7)
+      mod_1$set_user(kappa = (((k - 1) * by) + min)*6.2)
+    }
+      
+    else {
+      print("Variable not in list.")
+    }
+    
+    out <- mod_1$run(t)
+    
+    if (all(abs(out[(length-999):length,2] - out[length+1,2]) < 0.00001) == TRUE &&
+        all(abs(out[(length-999):length,3] - out[length+1,3]) < 0.00001) == TRUE &&
+        all(abs(out[(length-999):length,4] - out[length+1,4]) < 0.00001) == TRUE &&
+        all(abs(out[(length-999):length,5] - out[length+1,5]) < 0.00001) == TRUE &&
+        all(abs(out[(length-999):length,6] - out[length+1,6]) < 0.00001) == TRUE){
+      
+L_grid[k] <- out[length+1, 3]
+P_grid[k] <- out[length+1, 4]
+N_grid[k] <- out[length+1, 5]
+F_grid[k] <- out[length+1, 2]
+t_grid[k] <- out[length+1, 6]
+wl_grid[k] <- out[length+1, 8]
+fec_grid[k] <- out[length+1, 9]
+sur_grid[k] <- out[length+1, 10]
+c_grid[k] <- 0
+    } 
+    
+    else if(all(out[(length-999):(length+1),3] < 0.00001) == TRUE &&
+            all(out[(length-999):(length+1),4] < 0.00001) == TRUE &&
+            all(out[(length-999):(length+1),5] < 0.00001) == TRUE){
+L_grid[k] <- out[length+1, 3]
+P_grid[k] <- out[length+1, 4]
+N_grid[k] <- out[length+1, 5]
+F_grid[k] <- out[length+1, 2]
+t_grid[k] <- out[length+1, 6]
+wl_grid[k] <- out[length+1, 8]
+fec_grid[k] <- out[length+1, 9]
+sur_grid[k] <- out[length+1, 10]
+c_grid[k] <- 1
+    }
+    
+    else if(all(out[1001:(length+1), 2] == cummax(out[1001:(length+1), 2]))){
+L_grid[k] <- NA
+P_grid[k] <- NA
+N_grid[k] <- NA
+F_grid[k] <- NA
+t_grid[k] <- NA
+wl_grid[k] <- NA
+fec_grid[k] <- NA
+sur_grid[k] <- NA
+c_grid[k] <- NA
+    }
+    
+    else{
+  L_grid[k] <- tryCatch(error = function(cnd) NA, period_average_calculator(out,3, average_method, tolerance))
+  P_grid[k] <- tryCatch(error = function(cnd) NA, period_average_calculator(out,4, average_method, tolerance))
+  N_grid[k] <- tryCatch(error = function(cnd) NA, period_average_calculator(out,5, average_method, 
+                                                                            tolerance))
+  F_grid[k] <- tryCatch(error = function(cnd) NA, period_average_calculator(out,2, average_method, 
+                                                                            tolerance))
+  t_grid[k] <- tryCatch(error = function(cnd) NA, period_average_calculator(out,6, average_method, 
+                                                                            tolerance))
+  wl_grid[k] <- tryCatch(error = function(cnd) NA, period_average_calculator(out,8, average_method, 
+                                                                             tolerance))
+  fec_grid[k] <- tryCatch(error = function(cnd) NA, period_average_calculator(out,9, average_method,
+                                                                              tolerance))
+  sur_grid[k] <- tryCatch(error = function(cnd) NA, period_average_calculator(out, 10, average_method, tolerance))
+  c_grid[k] <- 2
+}
+  }
+  equi <-
+    as.data.frame(cbind(modi, L_grid, P_grid, N_grid, F_grid, t_grid, wl_grid, fec_grid, sur_grid, c_grid))
+  equi <- equi %>% rename(
+    Larval = L_grid,
+    Pupal = P_grid,
+    Adult = N_grid,
+    Food = F_grid,
+    lar_dev_time = t_grid,
+    wing_length = wl_grid,
+    fecundity = fec_grid,
+    survival = sur_grid,
+    equi_check = c_grid
+  ) %>%
+    pivot_longer(cols = !c(equi_check, modi),
+                 values_to = "equi_pop",
+                 names_to = "state")
+    equi <- equi %>% mutate(equi_check = ifelse(equi_check == 0, 
+                                              "Stable Equilibrium", 
+                                              ifelse(equi_check == 1, 
+                                                     "Extinction", "Oscillations")))
+    
+  equi
+}
+
+test_two_variables_ddf_5 <- function(variable_1, min_1, max_1, by_1, variable_2,
+                                     min_2, max_2, by_2, average_method, 
+                                     length = 18250, tolerance = 0.005) {
+  modi_1 <- rep(NA, length(seq(min_1, max_1, by_1))*length(seq(min_2, max_2, by_2)))
+  modi_2 <- rep(NA, length(modi_1))
+  L_grid <- rep(NA, length(modi_1))
+  P_grid <- rep(NA, length(modi_1))
+  N_grid <- rep(NA, length(modi_1))
+  F_grid <- rep(NA, length(modi_1))
+  t_grid <- rep(NA, length(modi_1))
+  wl_grid <- rep(NA, length(modi_1))
+  fec_grid <- rep(NA, length(modi_1))
+  c_grid <- rep(NA, length(modi_1))
+  for (k in 1:length(seq(min_1, max_1, by_1))) {
+    print(paste0("Progress: ", round((k-1)/length(seq(min_1, max_1, by_1)), digits = 3)*100, "%"))
+    for(j in 1:length(seq(min_2, max_2, by_2))) {
+    
+    mod <- odin::odin({
+      deriv(F) <- G_0 - A_max * L * F / (K_F + F)
+  
+  N_lag_n <- delay(N, tau_L)
+  F_lag_n <- delay(F, tau_L)
+  tau_lag_n <- delay(tau_L, tau_P)
+  tau_lag_2n <- delay(tau_L, tau_L + tau_P)
+  N_lag <- if (t - tau_L <= 0)
+    N_0
+  else
+    N_lag_n
+  F_lag <- if (t - tau_L <= 0)
+    F_0
+  else
+    F_lag_n
+  tau_lag <-
+    if (t - tau_P <= 0)
+      (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  else
+    tau_lag_n
+  tau_lag_2 <-
+    if (t - tau_L - tau_P <= 0)
+      (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  else
+    tau_lag_2n
+  
+  
+  deriv(L) <-
+    (eta + kappa * exp(-lambda * (tau_lag - 5))) * N -  (eta + kappa * exp(-lambda *
+                                                                       (tau_lag_2 - 5))) * N_lag * exp(-mu_L * tau_L) * F * (K_F + F_lag) / (F_lag *
+                                                                                                                                         (K_F + F)) - mu_L * L
+  deriv(P) <-
+    (eta + kappa * exp(-lambda * (tau_lag_2 - 5))) * N_lag * exp(-mu_L * tau_L) *
+    F * (K_F + F_lag) / (F_lag * (K_F + F)) - P / tau_P - mu_P * P
+  
+  deriv(N) <- I_N + P / tau_P - mu_N * N
+  deriv(tau_L) <- 1 - F * (K_F + F_lag) / (F_lag * (K_F + F))
+  output(dev) <- tau_lag
+  output(wl) <- ((0.13 * tau_lag - 0.35) / (0.0037 * (tau_lag  - 5))) ^ (1 /
+                                                                              4.08)
+  output(fec) <- eta + kappa * exp(-lambda * (tau_lag - 5))
+  
+  I_N <- if (t <= 0)
+    0
+  else if (0 < t && t <= T_1)
+    J_1
+  else
+    0
+  
+  initial(F) <- F_0
+  initial(L) <- L_0
+  initial(P) <- P_0
+  initial(N) <- N_0
+  initial(tau_L) <- (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  
+  G_0 <- user(200)
+  A_max <- user(0.3)
+  K_F <- user(10)
+  mu_L <- user(0.248)
+  mu_P <- user(0.395)
+  mu_N <- user(0.091)
+  tau_P <- user(1)
+  kappa <- user(6.2)
+  lambda <- user(0.42)
+  eta <- user(5.7)
+  mpovgamma <- user(1.5)
+  
+  F_0 <- user(20)
+  T_1 <- user(0.001)
+  J_1 <- user(100000)
+  L_0 <- user(0)
+  P_0 <- user(0)
+  N_0 <- user(0)
+      
+    })
+    
+    t <- seq(0, length, length.out = length+1)
+    mod_1 <- mod$new()
+    
+    if (variable_1 == "K_F") {
+      mod_1$set_user(K_F =(((k - 1) * by_1) + min_1))
+    }
+    else if (variable_1 == "G_0") {
+      mod_1$set_user(G_0 = (((k - 1) * by_1) + min_1))
+    }
+    else if (variable_1 == "A_max") {
+      mod_1$set_user(A_max = (((k - 1) * by_1) + min_1))
+    }
+    else if (variable_1 == "mu_L") {
+      mod_1$set_user(mu_L = (((k - 1) * by_1) + min_1))
+    }
+    else if (variable_1 == "mu_P") {
+      mod_1$set_user(mu_P = (((k - 1) * by_1) + min_1))
+    }
+    else if (variable_1 == "mu_N") {
+      mod_1$set_user(mu_N = (((k - 1) * by_1) + min_1))
+    }
+    else if (variable_1 == "tau_P") {
+      mod_1$set_user(tau_P = (((k - 1) * by_1) + min_1))
+    }
+    else if (variable_1 == "mpovgamma") {
+      mod_1$set_user(mpovgamma = (((k - 1) * by_1) + min_1))
+    }
+    else if (variable_1 == "eta") {
+      mod_1$set_user(eta = (((k - 1) * by_1) + min_1))
+    }
+    else if (variable_1 == "kappa") {
+      mod_1$set_user(kappa = (((k - 1) * by_1) + min_1))
+    }
+    else if (variable_1 == "lambda") {
+      mod_1$set_user(lambda = (((k - 1) * by_1) + min_1))
+    }
+    else {
+      print("Variable not in list.")
+    }
+    
+     if (variable_2 == "K_F") {
+      mod_1$set_user(K_F =(((j - 1) * by_2) + min_2))
+    }
+    else if (variable_2 == "G_0") {
+      mod_1$set_user(G_0 = (((j - 1) * by_2) + min_2))
+    }
+    else if (variable_2 == "A_max") {
+      mod_1$set_user(A_max = (((j - 1) * by_2) + min_2))
+    }
+    else if (variable_2 == "mu_L") {
+      mod_1$set_user(mu_L = (((j - 1) * by_2) + min_2))
+    }
+    else if (variable_2 == "mu_P") {
+      mod_1$set_user(mu_P = (((j - 1) * by_2) + min_2))
+    }
+    else if (variable_2 == "mu_N") {
+      mod_1$set_user(mu_N = (((j - 1) * by_2) + min_2))
+    }
+    else if (variable_2 == "tau_P") {
+      mod_1$set_user(tau_P = (((j - 1) * by_2) + min_2))
+    }
+    else if (variable_2 == "mpovgamma") {
+      mod_1$set_user(mpovgamma = (((j - 1) * by_2) + min_2))
+    }
+    else if (variable_2 == "eta") {
+      mod_1$set_user(eta = (((j - 1) * by_2) + min_2))
+    }
+    else if (variable_2 == "kappa") {
+      mod_1$set_user(kappa = (((j - 1) * by_2) + min_2))
+    }
+    else if (variable_2 == "lambda") {
+      mod_1$set_user(lambda = (((j - 1) * by_2) + min_2))
+    }
+    else {
+      print("Variable not in list.")
+    }
+    
+    out <- mod_1$run(t)
+    
+    modi_1[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- (((k - 1) * by_1) + min_1)
+    modi_2[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- (((j - 1) * by_2) + min_2)
+    
+    if (all(abs(out[(length-999):length,2] - out[(length+1),2]) < 0.00001) == TRUE &&
+        all(abs(out[(length-999):length,3] - out[(length+1),3]) < 0.00001) == TRUE &&
+        all(abs(out[(length-999):length,4] - out[(length+1),4]) < 0.00001) == TRUE &&
+        all(abs(out[(length-999):length,5] - out[(length+1),5]) < 0.00001) == TRUE &&
+        all(abs(out[(length-999):length,6] - out[(length+1),6]) < 0.00001) == TRUE){
+    L_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 3]
+    P_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 4]
+    N_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 5]
+    F_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 2]
+    t_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 6]
+    wl_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 8]
+    fec_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j]<- out[(length+1), 9]
+c_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- 0
+    } 
+    
+    else if(all(out[(length-999):(length+1),3] < 0.00001) == TRUE &&
+            all(out[(length-999):(length+1),4] < 0.00001) == TRUE &&
+            all(out[(length-999):(length+1),5] < 0.00001) == TRUE){
+    L_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 3]
+    P_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 4]
+    N_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 5]
+    F_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 2]
+    t_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 6]
+    wl_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 8]
+    fec_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j]<- out[(length+1), 9]
+c_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- 1    
+    }
+    
+    else if(all(out[1001:(length + 1), 2] == cummax(out[1001:(length+1), 2]))){
+L_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- NA
+P_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- NA
+N_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- NA
+F_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- NA
+t_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- NA
+wl_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- NA
+fec_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- NA
+c_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- NA
+    }
+
+    else{
+  L_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- tryCatch(error = function(cnd) NA, period_average_calculator(out,3, average_method, tolerance))
+  P_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- tryCatch(error = function(cnd) NA, period_average_calculator(out,4, average_method, tolerance))
+  N_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- tryCatch(error = function(cnd) NA, period_average_calculator(out,5, average_method, tolerance))
+  F_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- tryCatch(error = function(cnd) NA, period_average_calculator(out,2, average_method, tolerance))
+  t_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- tryCatch(error = function(cnd) NA, period_average_calculator(out,6, average_method, tolerance))
+  wl_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- tryCatch(error = function(cnd) NA, period_average_calculator(out,8, average_method, tolerance ))
+  fec_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <-tryCatch(error = function(cnd) NA, period_average_calculator(out,9, average_method, tolerance))
+  c_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- 2
+}
+    }
+  }
+  equi <-
+    as.data.frame(cbind(modi_1, modi_2, L_grid, P_grid, N_grid, F_grid, t_grid, wl_grid, fec_grid, c_grid))
+  equi <- equi %>% rename(
+    Larval = L_grid,
+    Pupal = P_grid,
+    Adult = N_grid,
+    Food = F_grid,
+    lar_dev_time = t_grid,
+    wing_length = wl_grid,
+    fecundity = fec_grid,
+    equi_check = c_grid
+  ) %>%
+    pivot_longer(cols = !c(equi_check, modi_1, modi_2),
+                 values_to = "equi_pop",
+                 names_to = "state")
+  
+  equi
+}
+
+test_three_variables_ddf_5 <- function(variable_1, min_1, max_1, by_1, min_2, 
+                                       max_2, by_2, average_method, 
+                                       length = 18250, tolerance = 0.005) {
+  modi_1 <- rep(NA, length(seq(min_1, max_1, by_1))*length(seq(min_2, max_2, by_2)))
+  modi_2 <- rep(NA, length(modi_1))
+  L_grid <- rep(NA, length(modi_1))
+  P_grid <- rep(NA, length(modi_1))
+  N_grid <- rep(NA, length(modi_1))
+  F_grid <- rep(NA, length(modi_1))
+  t_grid <- rep(NA, length(modi_1))
+  wl_grid <- rep(NA, length(modi_1))
+  fec_grid <- rep(NA, length(modi_1))
+  c_grid <- rep(NA, length(modi_1))
+  for (k in 1:length(seq(min_1, max_1, by_1))) {
+    print(paste0("Progress: ", round((k-1)/length(seq(min_1, max_1, by_1)), digits = 3)*100, "%"))
+    for(j in 1:length(seq(min_2, max_2, by_2))) {
+    
+    mod <- odin::odin({
+      deriv(F) <- G_0 - A_max * L * F / (K_F + F)
+  
+  N_lag_n <- delay(N, tau_L)
+  F_lag_n <- delay(F, tau_L)
+  tau_lag_n <- delay(tau_L, tau_P)
+  tau_lag_2n <- delay(tau_L, tau_L + tau_P)
+  N_lag <- if (t - tau_L <= 0)
+    N_0
+  else
+    N_lag_n
+  F_lag <- if (t - tau_L <= 0)
+    F_0
+  else
+    F_lag_n
+  tau_lag <-
+    if (t - tau_P <= 0)
+      (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  else
+    tau_lag_n
+  tau_lag_2 <-
+    if (t - tau_L - tau_P <= 0)
+      (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  else
+    tau_lag_2n
+  
+  
+  deriv(L) <-
+    (eta + kappa * exp(-lambda * (tau_lag - 5))) * N -  (eta + kappa * exp(-lambda *
+                                                                       (tau_lag_2 - 5))) * N_lag * exp(-mu_L * tau_L) * F * (K_F + F_lag) / (F_lag *
+                                                                                                                                         (K_F + F)) - mu_L * L
+  deriv(P) <-
+    (eta + kappa * exp(-lambda * (tau_lag_2 - 5))) * N_lag * exp(-mu_L * tau_L) *
+    F * (K_F + F_lag) / (F_lag * (K_F + F)) - P / tau_P - mu_P * P
+  
+  deriv(N) <- I_N + P / tau_P - mu_N * N
+  deriv(tau_L) <- 1 - F * (K_F + F_lag) / (F_lag * (K_F + F))
+  output(dev) <- tau_lag
+  output(wl) <- ((0.13 * tau_lag - 0.35) / (0.0037 * (tau_lag  - 5))) ^ (1 /
+                                                                              4.08)
+  output(fec) <- eta + kappa * exp(-lambda * (tau_lag - 5))
+  
+  I_N <- if (t <= 0)
+    0
+  else if (0 < t && t <= T_1)
+    J_1
+  else
+    0
+  
+  initial(F) <- F_0
+  initial(L) <- L_0
+  initial(P) <- P_0
+  initial(N) <- N_0
+  initial(tau_L) <- (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  
+  G_0 <- user(200)
+  A_max <- user(0.3)
+  K_F <- user(10)
+  mu_L <- user(0.248)
+  mu_P <- user(0.395)
+  mu_N <- user(0.091)
+  tau_P <- user(1)
+  kappa <- user(6.2)
+  lambda <- user(0.42)
+  eta <- user(5.7)
+  mpovgamma <- user(1.5)
+  
+  F_0 <- user(20)
+  T_1 <- user(0.001)
+  J_1 <- user(100000)
+  L_0 <- user(0)
+  P_0 <- user(0)
+  N_0 <- user(0)
+      
+    })
+    
+    t <- seq(0, length, length.out = length+1)
+    mod_1 <- mod$new()
+    
+    if (variable_1 == "K_F") {
+      mod_1$set_user(K_F =(((k - 1) * by_1) + min_1))
+    }
+    else if (variable_1 == "G_0") {
+      mod_1$set_user(G_0 = (((k - 1) * by_1) + min_1))
+    }
+    else if (variable_1 == "A_max") {
+      mod_1$set_user(A_max = (((k - 1) * by_1) + min_1))
+    }
+    else if (variable_1 == "mu_L") {
+      mod_1$set_user(mu_L = (((k - 1) * by_1) + min_1))
+    }
+    else if (variable_1 == "mu_P") {
+      mod_1$set_user(mu_P = (((k - 1) * by_1) + min_1))
+    }
+    else if (variable_1 == "mu_N") {
+      mod_1$set_user(mu_N = (((k - 1) * by_1) + min_1))
+    }
+    else if (variable_1 == "tau_P") {
+      mod_1$set_user(tau_P = (((k - 1) * by_1) + min_1))
+    }
+    else if (variable_1 == "mpovgamma") {
+      mod_1$set_user(mpovgamma = (((k - 1) * by_1) + min_1))
+    }
+    else if (variable_1 == "eta") {
+      mod_1$set_user(eta = (((k - 1) * by_1) + min_1))
+    }
+    else if (variable_1 == "kappa") {
+      mod_1$set_user(kappa = (((k - 1) * by_1) + min_1))
+    }
+    else if (variable_1 == "lambda") {
+      mod_1$set_user(lambda = (((k - 1) * by_1) + min_1))
+    }
+    else {
+      print("Variable not in list.")
+    }
+    
+
+      mod_1$set_user(eta = 5.7*(((j - 1) * by_2) + min_2))
+      mod_1$set_user(kappa = 6.2*(((j - 1) * by_2) + min_2))
+
+    
+    out <- mod_1$run(t)
+    
+    modi_1[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- (((k - 1) * by_1) + min_1)
+    modi_2[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- (((j - 1) * by_2) + min_2)
+    
+    if (all(abs(out[(length-999):length,2] - out[(length+1),2]) < 0.00001) == TRUE &&
+        all(abs(out[(length-999):length,3] - out[(length+1),3]) < 0.00001) == TRUE &&
+        all(abs(out[(length-999):length,4] - out[(length+1),4]) < 0.00001) == TRUE &&
+        all(abs(out[(length-999):length,5] - out[(length+1),5]) < 0.00001) == TRUE &&
+        all(abs(out[(length-999):length,6] - out[(length+1),6]) < 0.00001) == TRUE){
+    L_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 3]
+    P_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 4]
+    N_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 5]
+    F_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 2]
+    t_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 6]
+    wl_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 8]
+    fec_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j]<- out[(length+1), 9]
+c_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- 0
+    } 
+    
+    else if(all(out[(length-999):(length+1),3] < 0.00001) == TRUE &&
+            all(out[(length-999):(length+1),4] < 0.00001) == TRUE &&
+            all(out[(length-999):(length+1),5] < 0.00001) == TRUE){
+    L_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 3]
+    P_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 4]
+    N_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 5]
+    F_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 2]
+    t_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 6]
+    wl_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- out[(length+1), 8]
+    fec_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j]<- out[(length+1), 9]
+c_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- 1
+    }
+
+    else if(all(out[1001:(length + 1), 2] == cummax(out[1001:(length+1), 2]))){
+L_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- NA
+P_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- NA
+N_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- NA
+F_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- NA
+t_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- NA
+wl_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- NA
+fec_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- NA
+c_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- NA
+    }
+    
+    else{
+  L_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- tryCatch(error = function(cnd) NA, period_average_calculator(out,3, average_method, tolerance))
+  P_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- tryCatch(error = function(cnd) NA, period_average_calculator(out,4, average_method, tolerance))
+  N_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- tryCatch(error = function(cnd) NA, period_average_calculator(out,5, average_method, tolerance))
+  F_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- tryCatch(error = function(cnd) NA, period_average_calculator(out,2, average_method, tolerance))
+  t_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- tryCatch(error = function(cnd) NA, period_average_calculator(out,6, average_method, tolerance))
+  wl_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- tryCatch(error = function(cnd) NA, period_average_calculator(out,8, average_method, tolerance))
+  fec_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <-tryCatch(error = function(cnd) NA, period_average_calculator(out,9, average_method, tolerance))
+  c_grid[((k-1)*length(seq(min_2, max_2, by_2))) + j] <- 2
+}
+    }
+  }
+  equi <-
+    as.data.frame(cbind(modi_1, modi_2, L_grid, P_grid, N_grid, F_grid, t_grid, wl_grid, fec_grid, c_grid))
+  equi <- equi %>% rename(
+    Larval = L_grid,
+    Pupal = P_grid,
+    Adult = N_grid,
+    Food = F_grid,
+    lar_dev_time = t_grid,
+    wing_length = wl_grid,
+    fecundity = fec_grid,
+    equi_check = c_grid
+  ) %>%
+    pivot_longer(cols = !c(equi_check, modi_1, modi_2),
+                 values_to = "equi_pop",
+                 names_to = "state")
+  
+  equi
+}
+
+plot_outputs_ddf_5 <- function(output, variable){
+  g1 <- ggplot() +
+  geom_point(
+    aes(x = modi, y = equi_pop, colour = state, shape = factor(equi_check)),
+    data = output %>% filter(state == "Larval" |
+                                             state == "Pupal" |
+                                             state == "Adult")
+  ) +
+  theme_fivethirtyeight() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(
+    paste(
+      "Equilibrium Population of Larval, Pupal and Adult Mosquitoes \n when", variable, "varied."
+    )
+  ) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold")) +
+    guides(shape = "none") +
+  labs(x = variable,
+       y = "Equilibrium Population",
+       colour = 'Stage in Life-Cycle')
+  
+  g2 <- ggplot() +
+  geom_point(
+    aes(x = modi, y = equi_pop, colour = state, shape = factor(equi_check)),
+    data = output %>% filter(state == "Pupal" |
+                                             state == "Adult")
+  ) +
+  theme_fivethirtyeight() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(
+    paste(
+      "Equilibrium Population of Pupal and Adult Mosquitoes \n when", variable, "varied."
+    )
+  ) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold")) +
+    guides(shape = "none") + 
+  labs(x = variable,
+       y = "Equilibrium Population",
+       colour = 'Stage in Life-Cycle')
+
+  
+  g3 <- ggplot() +
+  geom_point(aes(x = modi, y = equi_pop, colour = state, shape = factor(equi_check)),
+             data = output %>% filter(state == "Food")) +
+  theme_fivethirtyeight() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(paste(
+    "Equilibrium Mass of Food in Habitat when", variable, "varied."
+  )) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold"),
+        legend.position = "none") +
+  labs(x = variable,
+       y = "Mass of Food (mg)",
+       colour = 'Stage in Life-Cycle')
+  
+  g4 <- ggplot() +
+  geom_point(aes(x = modi, y = equi_pop, colour = state, shape = factor(equi_check)),
+             data = output %>% filter(state == "lar_dev_time")) +
+  theme_fivethirtyeight() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(paste(
+    "Equilibrium Larval to Pupal Development Time \n when", variable, "varied."
+  )) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold"),
+        legend.position = "none") +
+  labs(x = variable,
+       y = "Development Time (days)",
+       colour = 'State')
+  
+  g5 <- ggplot() +
+  geom_point(aes(x = modi, y = equi_pop, colour = state, shape = factor(equi_check)),
+             data = output %>% filter(state == "wing_length")) +
+  theme_fivethirtyeight() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(paste("Equilibrium Wing Length \n when", variable, "varied.")) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold"),
+        legend.position = "none") +
+  labs(x = variable,
+       y = "Equilibrium Wing Length (mm)",
+       colour = 'State')
+
+g6 <- ggplot() +
+  geom_point(aes(x = modi, y = equi_pop, colour = state, shape = factor(equi_check)),
+             data = output %>% filter(state == "fecundity")) +
+  theme_fivethirtyeight() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(paste("Equilibrium Fecundity when", variable, "varied.")) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold"),
+                                  legend.position = "none") +
+  labs(x = variable,
+       y = "Equilibrium Fecundity (eggs hatch per adult)",
+       colour = 'State')
+  
+  print((g1 + g2)/(g3 + g4)/(g5 + g6))
+}
+
+plot_dd_outputs_ddf_5 <- function(output, variable, n_min, n_max, t_min, t_max, 
+                                  f_min, f_max, s_min, s_max){
+  
+  scale <- c("#72bcd5", "#e76254", "#f7aa58")
+  names(scale) <- c("Stable Equilibrium", "Extinction", "Oscillations")
+  
+  g2 <- ggplot() +
+  geom_point(
+    aes(x = modi, y = equi_pop, colour = equi_check),
+    data = output %>% filter(state == "Adult")) +
+  scale_colour_manual(values = scale) +
+  theme_bw() +
+    ylim(n_min,n_max) +
+  ggtitle(
+    paste(
+      "Long-term Average Population of Pupal and Adult Mosquitoes"
+    )
+  ) +
+ theme(axis.title.x = element_text(size = 17.5),
+        axis.title.y = element_text(size = 15),
+        axis.text.x = element_text(size = 13),
+        axis.text.y = element_text(size = 13),
+        plot.title = element_text(size = 15, face = "bold"),
+        legend.position = "none") +
+  labs(x = ifelse(variable == "mu_L", expression(mu["L"]),variable),
+       y = "Number",
+       colour = 'Stage in Life-Cycle')
+  
+  g4 <- ggplot() +
+  geom_point(aes(x = modi, y = equi_pop, colour = equi_check),
+             data = output %>% filter(state == "lar_dev_time")) +
+  theme_bw() +
+  scale_colour_manual(values = scale) +
+  ggtitle(paste(
+    "Long-term Average Larval to Pupal \n Development Time"
+  )) +
+ theme(axis.title.x = element_text(size = 17.5),
+        axis.title.y = element_text(size = 15),
+        axis.text.x = element_text(size = 13),
+        axis.text.y = element_text(size = 13),
+        plot.title = element_text(size = 15, face = "bold"),
+        legend.position = "none") +
+    ylim(t_min,t_max) +
+  labs(x = ifelse(variable == "mu_L", expression(mu["L"]),variable),
+       y = "Development Time (Days)",
+       colour = 'Long-term Behaviour')
+  
+
+g6 <- ggplot() +
+  geom_point(aes(x = modi, y = equi_pop, colour = equi_check),
+             data = output %>% filter(state == "fecundity")) +
+  theme_bw() +
+  scale_colour_manual(values = scale) +
+  ggtitle(paste("Long-term Average Fecundity")) +
+ theme(axis.title.x = element_text(size = 17.5),
+        axis.title.y = element_text(size = 15),
+        axis.text.x = element_text(size = 13),
+        axis.text.y = element_text(size = 13),
+       legend.title = element_text(size = 15),
+       legend.text = element_text(size = 13),
+        plot.title = element_text(size = 15, face = "bold")) +
+  ylim(f_min,f_max) + 
+  labs(x = ifelse(variable == "mu_L", expression(mu["L"]),variable),
+       y = "Eggs hacthed per adult mosquito per day",
+       colour = 'Long-term Behaviour')
+
+g7 <- ggplot() +
+  geom_point(aes(x = modi, y = equi_pop, colour = equi_check),
+             data = output %>% filter(state == "survival")) +
+  theme_bw() +
+  scale_colour_manual(values = scale) +
+  ggtitle(paste("Long-term Average Larval to Pupal Survival Probability")) +
+  theme(axis.title.x = element_text(size = 17.5),
+        axis.title.y = element_text(size = 15),
+        axis.text.x = element_text(size = 13),
+        axis.text.y = element_text(size = 13),
+        plot.title = element_text(size = 15, face = "bold"),
+        legend.position = "none") +
+  ylim(s_min,s_max) +
+  labs(x = ifelse(variable == "mu_L", expression(mu["L"]),variable),
+       y = "Probability of Survival",
+       colour = 'Long Term Behaviour')
+  
+  print((g4 + g6 + plot_annotation(tag_levels = "A") & theme(plot.tag = element_text(size = 20, face = "bold"))))
+}
+
+plot_outputs_kappa_eta_ddf_5 <- function(output, t_min, t_max){
+  
+
+    g3 <- ggplot() +
+      geom_vline(xintercept = 0.965, linetype = "dashed", linewidth = 1, colour = "grey35") +
+  geom_point(aes(x = 1 - modi/11.9, y = equi_pop, colour = state),
+             data = output %>% 
+               filter(equi_check != "Extinction") %>% 
+               filter(state == "lar_dev_time")) +
+  geom_point(aes(x = 1 - modi/11.9, y = equi_pop*4 - 4, colour = state),
+             data = output %>% 
+               filter(equi_check!= "Extinction") %>%
+               filter(state == "wing_length")) +
+  theme_bw() +
+  scale_colour_manual(values = c("#ef8a47", "#376795"), 
+                      labels = c("Larval Development \n Time", "Adult Wing \n Length")) +
+  ggtitle(paste(
+    "Long-term Average Larval to Pupal Development Time \n and Average Adult Female Wing Length"
+  )) +
+  scale_y_continuous(name = "Larval Development Time (Days)", 
+                     limits = c(t_min,t_max),
+                     sec.axis = sec_axis(~ ./4 + 1, name = "Adult Female Wing Length (mm)")) +
+      xlim(0,1) + 
+ theme(axis.title.x = element_text(size = 15),
+        axis.title.y = element_text(size = 15),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+       legend.title = element_text(size = 17),
+       legend.text = element_text(size = 15),
+        plot.title = element_text(size = 13, face = "bold"),
+       legend.position = "bottom") + 
+  labs(x = "Proportion of Population Homozygous for Modified Gene",
+       colour = 'Characteristic')
+
+  
+
+  print(g3)
+}
+
+plot_wing_length_ddf_5 <- function(output, variable, t_min, t_max, w_min, w_max){
+  
+  scale <- c("#72bcd5", "#ef8a47", "#ffd06f")
+  names(scale) <- c("Stable Equilibrium", "Extinction", "Oscillations")
+  
+  g4 <- ggplot() +
+  geom_point(aes(x = modi, y = equi_pop, colour = equi_check),
+             data = output %>% filter(state == "lar_dev_time")) +
+  theme_bw() +
+  scale_colour_manual(values = scale) +
+  ggtitle(paste(
+    "Long-term Average Larval to Pupal Development Time"
+  )) +
+  theme(axis.title.x = element_text(size = 10),
+        axis.title.y = element_text(size = 10),
+        plot.title = element_text(size = 10, face = "bold"),
+        legend.position = "none") + ylim(t_min,t_max) +
+  labs(x = variable,
+       y = "Development Time (Days)",
+       colour = 'Long-term Behaviour')
+
+g8 <- ggplot() +
+  geom_point(aes(x = modi, y = equi_pop, colour = equi_check),
+             data = output %>% filter(state == "wing_length")) +
+  theme_bw() +
+  scale_colour_manual(values = scale) +
+  ggtitle(paste("Long-term Average Adult Female Wing Length")) +
+  theme(axis.title.x = element_text(size = 10),
+        axis.title.y = element_text(size = 10),
+        plot.title = element_text(size = 10, face = "bold")) + ylim(w_min,w_max) +
+  labs(x = variable,
+       y = "Wing Length (mm)",
+       colour = 'Long Term Behaviour')
+  print(g4 + g8)
+}
+
+plot_outputs_ddf_G0_KF <- function(output1, output2){
+  
+  g1 <- ggplot() +
+    geom_point(
+      aes(x = modi, y = equi_pop, colour = state, shape = factor(equi_check)),
+      data = output1 %>% filter(state == "Larval")) +
+    theme_bw() +
+    scale_colour_manual(values = c("#72bcd5")) + 
+    ggtitle("Equilibrium Population of Larvae \n when G_0 varied.") +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 18),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        legend.title = element_text(size = 18),
+        legend.text = element_text(size = 18),
+        plot.title = element_text(size = 15, face = "bold"),
+          legend.position = "bottom") +
+    guides(shape = "none") + 
+    labs(x = expression("G"[0]),
+         y = "Equilibrium Population",
+         colour = 'State')
+  
+  g2 <- ggplot() +
+    geom_point(
+      aes(x = modi, y = equi_pop, colour = state, shape = factor(equi_check)),
+      data = output1 %>% filter(state == "Pupal" | state == "Adult")) +
+    theme_bw() +
+    scale_colour_manual(values = c("#ef8a47", "#ffd06f")) + 
+    ggtitle("Equilibrium Population of Pupae and Adults \n when G_0 varied.") +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 18),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        legend.title = element_text(size = 18),
+        legend.text = element_text(size = 18),
+        plot.title = element_text(size = 15, face = "bold"),
+          legend.position = "bottom") +
+    guides(shape = "none") + 
+    labs(x = expression("G"[0]),
+         y = "Equilibrium Population",
+         colour = 'State')
+  
+  
+  g3 <- ggplot() +
+    geom_point(aes(x = modi, y = equi_pop, colour = state, shape = factor(equi_check)),
+               data = output1 %>% filter(state == "Food" | state == "lar_dev_time")) +
+    theme_bw() +
+    scale_colour_manual(values = c("#e76254", "#1e466e"), labels = c("Food", "Larval Development Time")) + 
+    scale_y_continuous(name = "Equilibrium Mass of Food (mg)", 
+                         sec.axis = dup_axis(name = "Equilibrium Lavral Development \n Time (Days)")) + 
+    ggtitle("Equilibrium Values of Food and Larval Development \n Time when G_0 varied.") +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 18),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        legend.title = element_text(size = 18),
+        legend.text = element_text(size = 18),
+        plot.title = element_text(size = 15, face = "bold"),
+          legend.position = "bottom") + 
+    guides(shape = "none") + 
+    labs(x = expression("G"[0]),
+         colour = 'State')
+  
+  g4 <- ggplot() +
+    geom_point(
+      aes(x = modi, y = equi_pop, colour = state, shape = factor(equi_check)),
+      data = output2 %>% filter(state == "Larval" | state == "Pupal" | state == "Adult")) +
+    theme_bw() +
+    scale_colour_manual(values = c("#ef8a47", "#72bcd5", "#ffd06f")) + 
+    ggtitle("Equilibrium Population of Larvae, Pupae \n and Aduls when K_F varied.") +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 18),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        legend.title = element_text(size = 18),
+        legend.text = element_text(size = 18),
+        plot.title = element_text(size = 15, face = "bold"),
+          legend.position = "bottom") +
+    guides(shape = "none") + 
+    labs(x = expression(K["F"]),
+         y = "Equilibrium Population",
+         colour = 'State')
+  
+  g5 <- ggplot() +
+    geom_point(aes(x = modi, y = equi_pop, colour = state, shape = factor(equi_check)),
+               data = output2 %>% filter(state == "Food")) +
+    theme_bw() +
+    scale_colour_manual(values = c("#e76254")) + 
+    ggtitle("Equilibrium Mass of Food when K_F varied.") +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 18),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        legend.title = element_text(size = 18),
+        legend.text = element_text(size = 18),
+        plot.title = element_text(size = 15, face = "bold"),
+          legend.position = "bottom")  +
+    guides(shape = "none") + 
+    labs(x = expression(K["F"]),
+         y = "Equilibrium Mass of Food (mg)",
+         colour = 'State')
+  
+  g6 <- ggplot() +
+    geom_point(aes(x = modi, y = equi_pop, colour = state, shape = factor(equi_check)),
+               data = output2 %>% filter(state == "lar_dev_time")) +
+    theme_bw() +
+    scale_colour_manual(values = c("#1e466e"), labels = c("Larval Development Time")) + 
+    ggtitle("Equilibrium Larval Development Time \n when K_F varied.") +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 15),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        plot.title = element_text(size = 15, face = "bold"),
+        legend.title = element_text(size = 18),
+        legend.text = element_text(size = 18),
+          legend.position = "bottom")  +
+    guides(shape = "none") + 
+    labs(x = expression(K["F"]),
+         y = "Equilibrium Larval Development \n Time (Days)",
+         colour = 'State')
+  
+  
+  print(((g1 + g2 + g3)/(g4 + g5 + g6) + plot_annotation(tag_levels = "A") & theme(plot.tag = element_text(size = 20, face = "bold"))))
+}
+
+check_output_near_stab_ddf_5 <- function(variable, value) {
+  mod13 <- odin::odin({
+  deriv(F) <- G_0 - A_max * L * F / (K_F + F)
+  
+  N_lag_n <- delay(N, tau_L)
+  F_lag_n <- delay(F, tau_L)
+  tau_lag_n <- delay(tau_L, tau_P)
+  tau_lag_2n <- delay(tau_L, tau_L + tau_P)
+  N_lag <- if (t - tau_L <= 0)
+    N_0
+  else
+    N_lag_n
+  F_lag <- if (t - tau_L <= 0)
+    F_0
+  else
+    F_lag_n
+  tau_lag <-
+    if (t - tau_P <= 0)
+      (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  else
+    tau_lag_n
+  tau_lag_2 <-
+    if (t - tau_L - tau_P <= 0)
+      (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  else
+    tau_lag_2n
+  
+  
+  deriv(L) <-
+    (eta + kappa * exp(-lambda * (tau_lag - 5))) * N -  (eta + kappa * exp(-lambda *
+                                                                       (tau_lag_2 - 5))) * N_lag * exp(-mu_L * tau_L) * F * (K_F + F_lag) / (F_lag *
+                                                                                                                                         (K_F + F)) - mu_L * L
+  deriv(P) <-
+    (eta + kappa * exp(-lambda * (tau_lag_2 - 5))) * N_lag * exp(-mu_L * tau_L) *
+    F * (K_F + F_lag) / (F_lag * (K_F + F)) - P / tau_P - mu_P * P
+  
+  deriv(N) <- I_N + P / tau_P - mu_N * N
+  deriv(tau_L) <- 1 - F * (K_F + F_lag) / (F_lag * (K_F + F))
+  output(dev) <- tau_lag
+  output(wl) <- ((0.13 * tau_lag - 0.35) / (0.0037 * (tau_lag  - 5))) ^ (1 /
+                                                                              4.08)
+  output(fec) <- eta + kappa * exp(-lambda * (tau_lag - 5))
+  
+  
+  I_N <- if (t <= 0)
+    0
+  else if (0 < t && t <= T_1)
+    J_1
+  else
+    0
+  
+  initial(F) <- F_0
+  initial(L) <- L_0
+  initial(P) <- P_0
+  initial(N) <- N_0
+  initial(tau_L) <- (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  
+  G_0 <- user(200)
+  A_max <- user(0.3)
+  K_F <- user(10)
+  mu_L <- user(0.248)
+  mu_P <- user(0.395)
+  mu_N <- user(0.091)
+  tau_P <- user(1)
+ kappa <- user(6.2)
+ lambda <- user(0.42)
+  eta <- user(5.7)
+  mpovgamma <- user(1.5)
+  
+  F_0 <- user(20)
+  T_1 <- user(0.001)
+  J_1 <- user(100000)
+  L_0 <- user(0)
+  P_0 <- user(0)
+  N_0 <- user(0)
+  
+})
+
+t <- seq(0, 182500, length.out = 182501)
+mod_13 <- mod13$new()
+if (variable == "q") {
+      mod_13$set_user(q = value)
+    } else if (variable == "K_F") {
+      mod_13$set_user(K_F = value)
+    }
+    else if (variable == "G_0") {
+      mod_13$set_user(G_0 = value)
+    }
+    else if (variable == "A_max") {
+      mod_13$set_user(A_max = value)
+    }
+    else if (variable == "mu_L") {
+      mod_13$set_user(mu_L = value)
+    }
+    else if (variable == "mu_P") {
+      mod_13$set_user(mu_P = value)
+    }
+    else if (variable == "mu_N") {
+      mod_13$set_user(mu_N = value)
+    }
+    else if (variable == "tau_P") {
+      mod_13$set_user(tau_P = value)
+    }
+    else if (variable == "mpovgamma") {
+      mod_13$set_user(mpovgamma = value)
+    }
+    else if (variable == "eta") {
+      mod_13$set_user(eta = value)
+    }
+    else if (variable == "kappa") {
+      mod_13$set_user(kappa = value)
+    }
+    else if (variable == "lambda") {
+      mod_13$set_user(lambda = value)
+    }
+    else {
+      print("Variable not in list.")
+    }
+out13 <- mod_13$run(t)
+out_df_wide13 <- as.data.frame(out13) 
+out_df_long13 <- out_df_wide13 %>%
+  rename(Larval = L,
+         Pupal = P,
+         Adult = N,
+         wing_length = wl,
+         fecundity = fec) %>%
+  pivot_longer(cols = !t,
+               values_to = "count",
+               names_to = "state")
+
+h1 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.9,
+    data = out_df_long13 %>%
+      filter(state == "Larval" |
+               state == "Pupal" | state == "Adult")
+  ) +
+  theme_fivethirtyeight() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(expression(paste(
+    bold("Larval, Pupal and Adult "),
+    bolditalic("Anopheles"),
+    bold(" populations")
+  ))) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold")) +
+  labs(x = "Time (Days)",
+       y = "Number",
+       colour = 'Stage in Life-Cycle')
+
+h2 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.9,
+    data = out_df_long13 %>%
+      filter(state == "Pupal" | state == "Adult")
+  ) +
+  theme_fivethirtyeight() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(expression(paste(
+    bold("Pupal and Adult "),
+    bolditalic("Anopheles"),
+    bold(" populations")
+  ))) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold")) +
+  labs(x = "Time (Days)",
+       y = "Number",
+       colour = 'Stage in Life-Cycle')
+
+h3 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.9,
+    data = out_df_long13 %>%
+      filter(state == "F")
+  ) +
+  theme_fivethirtyeight() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(expression(paste(bold("Food "), bold(" density")))) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Time (Days)",
+       y = "Number",
+       colour = 'Stage in Life-Cycle')
+
+h4 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.9,
+    data = out_df_long13 %>%
+      filter(state == "tau_L")
+  ) +
+  theme_fivethirtyeight() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(expression(paste(bold("Dev Time ")))) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Time (Days)",
+       y = "Number",
+       colour = 'Stage in Life-Cycle')
+h5 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.9,
+    data = out_df_long13 %>%
+      filter(state == "wing_length")
+  ) +
+  theme_fivethirtyeight() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(expression(paste(bold("Wing Length")))) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Time (Days)",
+       y = "Length (mm)",
+       colour = 'Stage in Life-Cycle')
+
+h6 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.9,
+    data = out_df_long13 %>%
+      filter(state == "fecundity")
+  ) +
+  theme_fivethirtyeight() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(expression(paste(bold("Fecundity")))) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Time (days)",
+       y = "Eggs hacthed per adult mosquito",
+       colour = 'Stage in Life-Cycle') 
+
+print((h1 + h2)/(h3+h4)/(h5+h6))
+}
+
+check_output_near_stab_ddf_5_data <- function(variable, value) {
+  mod13 <- odin::odin({
+  deriv(F) <- G_0 - A_max * L * F / (K_F + F)
+  
+  N_lag_n <- delay(N, tau_L)
+  F_lag_n <- delay(F, tau_L)
+  tau_lag_n <- delay(tau_L, tau_P)
+  tau_lag_2n <- delay(tau_L, tau_L + tau_P)
+  N_lag <- if (t - tau_L <= 0)
+    N_0
+  else
+    N_lag_n
+  F_lag <- if (t - tau_L <= 0)
+    F_0
+  else
+    F_lag_n
+  tau_lag <-
+    if (t - tau_P <= 0)
+      (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  else
+    tau_lag_n
+  tau_lag_2 <-
+    if (t - tau_L - tau_P <= 0)
+      (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  else
+    tau_lag_2n
+  
+  
+  deriv(L) <-
+    (eta + kappa * exp(-lambda * (tau_lag - 5))) * N -  (eta + kappa * exp(-lambda *
+                                                                       (tau_lag_2 - 5))) * N_lag * exp(-mu_L * tau_L) * F * (K_F + F_lag) / (F_lag *
+                                                                                                                                         (K_F + F)) - mu_L * L
+  deriv(P) <-
+    (eta + kappa * exp(-lambda * (tau_lag_2 - 5))) * N_lag * exp(-mu_L * tau_L) *
+    F * (K_F + F_lag) / (F_lag * (K_F + F)) - P / tau_P - mu_P * P
+  
+  deriv(N) <- I_N + P / tau_P - mu_N * N
+  deriv(tau_L) <- 1 - F * (K_F + F_lag) / (F_lag * (K_F + F))
+  output(dev) <- tau_lag
+  output(wl) <- ((0.13 * tau_lag - 0.35) / (0.0037 * (tau_lag  - 5))) ^ (1 /
+                                                                              4.08)
+  output(fec) <- eta + kappa * exp(-lambda * (tau_lag - 5))
+  
+  
+  I_N <- if (t <= 0)
+    0
+  else if (0 < t && t <= T_1)
+    J_1
+  else
+    0
+  
+  initial(F) <- F_0
+  initial(L) <- L_0
+  initial(P) <- P_0
+  initial(N) <- N_0
+  initial(tau_L) <- (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  
+  G_0 <- user(200)
+  A_max <- user(0.3)
+  K_F <- user(10)
+  mu_L <- user(0.248)
+  mu_P <- user(0.395)
+  mu_N <- user(0.091)
+  tau_P <- user(1)
+ kappa <- user(6.2)
+ lambda <- user(0.42)
+  eta <- user(5.7)
+  mpovgamma <- user(1.5)
+  
+  F_0 <- user(20)
+  T_1 <- user(0.001)
+  J_1 <- user(100000)
+  L_0 <- user(0)
+  P_0 <- user(0)
+  N_0 <- user(0)
+  
+})
+
+t <- seq(0, 182500, length.out = 182501)
+mod_13 <- mod13$new()
+if (variable == "q") {
+      mod_13$set_user(q = value)
+    } else if (variable == "K_F") {
+      mod_13$set_user(K_F = value)
+    }
+    else if (variable == "G_0") {
+      mod_13$set_user(G_0 = value)
+    }
+    else if (variable == "A_max") {
+      mod_13$set_user(A_max = value)
+    }
+    else if (variable == "mu_L") {
+      mod_13$set_user(mu_L = value)
+    }
+    else if (variable == "mu_P") {
+      mod_13$set_user(mu_P = value)
+    }
+    else if (variable == "mu_N") {
+      mod_13$set_user(mu_N = value)
+    }
+    else if (variable == "tau_P") {
+      mod_13$set_user(tau_P = value)
+    }
+    else if (variable == "mpovgamma") {
+      mod_13$set_user(mpovgamma = value)
+    }
+    else if (variable == "eta") {
+      mod_13$set_user(eta = value)
+    }
+    else if (variable == "kappa") {
+      mod_13$set_user(kappa = value)
+    }
+    else if (variable == "lambda") {
+      mod_13$set_user(lambda = value)
+    }
+    else {
+      print("Variable not in list.")
+    }
+out13 <- mod_13$run(t)
+out_df_wide13 <- as.data.frame(out13) 
+out_df_wide13}
+
+plot_contours_ddf_5 <- function(output, variable_1, variable_2){
+
+  output_1 <- output %>% rename(variable_1 = modi_1, variable_2 = modi_2)
+
+p1 <- ggplot(aes(x = variable_1, y = variable_2), data = output_1 %>% filter(state == "Larval")) + geom_contour_filled(aes(z = equi_pop), bins = 10) + geom_contour(aes(z = equi_check), colour = "white") +
+  scale_fill_met_d(name = "Hiroshige", direction = -1) +
+  ggtitle(paste("Equilibrium Larval Population when varying ", variable_1, "and ", variable_2)) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold")) +
+  labs(x = variable_1,
+       y = variable_2,
+       fill = "Larval Population")
+
+p2 <- ggplot(aes(x = variable_1, y = variable_2), data = output_1 %>% filter(state == "Pupal")) + geom_contour_filled(aes(z = equi_pop), bins = 10) + geom_contour(aes(z = equi_check), colour = "white") +
+  scale_fill_met_d(name = "Hiroshige", direction = -1) +
+  ggtitle(paste("Equilibrium Pupal Population when varying ", variable_1, "and ", variable_2)) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold")) +
+  labs(x = variable_1,
+       y = variable_2,
+       fill = "Pupal Population")
+
+p3 <- ggplot(aes(x = variable_1, y = variable_2), data = output_1 %>% filter(state == "Adult")) + geom_contour_filled(aes(z = equi_pop), bins = 10) + geom_contour(aes(z = equi_check), colour = "white") +
+  scale_fill_met_d(name = "Hiroshige", direction = -1) +
+  ggtitle(paste("Equilibrium Adult Population when varying ", variable_1, "and ", variable_2)) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold")) +
+  labs(x = variable_1,
+       y = variable_2,
+       fill = "Adult Population")
+
+p4 <- ggplot(aes(x = variable_1, y = variable_2), data = output_1 %>% filter(state == "Food")) + geom_contour_filled(aes(z = equi_pop), bins = 10) + geom_contour(aes(z = equi_check), colour = "white") +
+  scale_fill_met_d(name = "Hiroshige", direction = -1) +
+  ggtitle(paste("Equilibrium Food when varying ", variable_1, "and ", variable_2)) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold")) +
+  labs(x = variable_1,
+       y = variable_2,
+       fill = "Food")
+
+p5 <- ggplot(aes(x = variable_1, y = variable_2), data = output_1 %>% filter(state == "lar_dev_time")) + geom_contour_filled(aes(z = equi_pop), bins = 10) + geom_contour(aes(z = equi_check), colour = "white") +
+  scale_fill_met_d(name = "Hiroshige", direction = -1) +
+  ggtitle(paste("Equilibrium Development Time when varying ", variable_1, "and ", variable_2)) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold")) +
+  labs(x = variable_1,
+       y = variable_2,
+       fill = "Development Time")
+
+p6 <- ggplot(aes(x = variable_1, y = variable_2), data = output_1 %>% filter(state == "fecundity")) + geom_contour_filled(aes(z = equi_pop), bins = 10) + geom_contour(aes(z = equi_check), colour = "white") +
+  scale_fill_met_d(name = "Hiroshige", direction = -1) +
+  ggtitle(paste("Equilibrium Fecundity when varying ", variable_1, "and ", variable_2)) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold")) +
+  labs(x = variable_1,
+       y = variable_2,
+       fill = "Fecundity")
+
+(p1 + p2)/ (p3 + p4)/ (p5 + p6)}
+
+plot_for_contours <- function(g = 200, a = 0.3, kf = 10, ml = 0.248, 
+                              mp = 0.395, mn = 0.091, tp = 1, k = 6.2, 
+                              l = 0.42, e = 5.7, mg = 1.5, length = length){
+  mod <- odin::odin({
+  deriv(F) <- G_0 - A_max * L * F / (K_F + F)
+  
+  N_lag_n <- delay(N, tau_L)
+  F_lag_n <- delay(F, tau_L)
+  tau_lag_n <- delay(tau_L, tau_P)
+  tau_lag_2n <- delay(tau_L, tau_L + tau_P)
+  N_lag <- if (t - tau_L <= 0)
+    N_0
+  else
+    N_lag_n
+  F_lag <- if (t - tau_L <= 0)
+    F_0
+  else
+    F_lag_n
+  tau_lag <-
+    if (t - tau_P <= 0)
+      (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  else
+    tau_lag_n
+  tau_lag_2 <-
+    if (t - tau_L - tau_P <= 0)
+      (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  else
+    tau_lag_2n
+  
+  
+  deriv(L) <-
+    (eta + kappa * exp(-lambda * (tau_lag - 5))) * N -  (eta + kappa * exp(-lambda *
+                                                                       (tau_lag_2 - 5))) * N_lag * exp(-mu_L * tau_L) * F * (K_F + F_lag) / (F_lag *
+                                                                                                                                         (K_F + F)) - mu_L * L
+  deriv(P) <-
+    (eta + kappa * exp(-lambda * (tau_lag_2 - 5))) * N_lag * exp(-mu_L * tau_L) *
+    F * (K_F + F_lag) / (F_lag * (K_F + F)) - P / tau_P - mu_P * P
+  
+  deriv(N) <- I_N + P / tau_P - mu_N * N
+  deriv(tau_L) <- 1 - F * (K_F + F_lag) / (F_lag * (K_F + F))
+  output(dev) <- tau_lag
+  
+  
+  I_N <- if (t <= 0)
+    0
+  else if (0 < t && t <= T_1)
+    J_1
+  else
+    0
+  
+  initial(F) <- F_0
+  initial(L) <- L_0
+  initial(P) <- P_0
+  initial(N) <- N_0
+  initial(tau_L) <- (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  
+  G_0 <- user(200)
+  A_max <- user(0.3)
+  K_F <- user(10)
+  mu_L <- user(0.248)
+  mu_P <- user(0.395)
+  mu_N <- user(0.091)
+  tau_P <- user(1)
+ kappa <- user(6.2)
+ lambda <- user(0.42)
+  eta <- user(5.7)
+  mpovgamma <- user(1.5)
+  
+  F_0 <- user(20)
+  T_1 <- user(0.001)
+  J_1 <- user(100000)
+  L_0 <- user(0)
+  P_0 <- user(0)
+  N_0 <- user(0)
+  
+})
+
+t <- seq(0, length, length.out = length+1)
+mod_1 <- mod$new()
+mod_1$set_user(G_0 = g)
+mod_1$set_user(K_F = kf)
+mod_1$set_user(A_max = a)
+mod_1$set_user(mu_L = ml)
+mod_1$set_user(mu_P = mp)
+mod_1$set_user(mu_N = mn)
+mod_1$set_user(tau_P = tp)
+mod_1$set_user(kappa = k)
+mod_1$set_user(lambda = l)
+mod_1$set_user(eta = e)
+mod_1$set_user(mpovgamma = mg)
+out <- mod_1$run(t)
+out_df_wide <-
+  as.data.frame(out) %>% mutate(wing_length = ((0.13 * dev - 0.35) / (0.0037 *
+                                                                        (dev - 5))) ^ (1 / 4.08),
+                                fecundity = e + k * exp(-l * (dev-5)))
+out_df_long <- out_df_wide %>%
+  rename(Larval = L,
+         Pupal = P,
+         Adult = N) %>%
+  pivot_longer(cols = !t,
+               values_to = "count",
+               names_to = "state")
+
+gg1 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.7,
+    data = out_df_long %>%
+      filter(state == "Larval")
+  ) +
+  theme_bw() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(expression(paste(
+    bold("Larval "),
+    bolditalic("Anopheles"),
+    bold(" population")
+  ))) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Time since model initialised (Days)",
+       y = "Number",
+       colour = 'Stage in Life-Cycle')
+
+gg2 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.7,
+    data = out_df_long %>%
+      filter(state == "Pupal")
+  )  +
+  theme_bw() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(expression(paste(
+    bold("Pupal "),
+    bolditalic("Anopheles"),
+    bold(" population")
+  ))) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Time since model initialised (Days)",
+       y = "Number",
+       colour = 'Stage in Life-Cycle')
+
+gg3 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.7,
+    data = out_df_long %>%
+      filter(state == "Adult")
+  ) +
+  theme_bw() +
+  scale_colour_met_d(name = "Hiroshige")  +
+  theme(axis.title.x = element_text(size = 8),
+        axis.title.y = element_text(size = 8),
+        axis.text.x = element_text(size = 8),
+        axis.text.y = element_text(size = 8),
+        plot.title = element_text(size = 9, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Time since model initialised (Days)",
+       y = "Number",
+       colour = 'Stage in Life-Cycle')
+
+gg4 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.7,
+    data = out_df_long %>%
+      filter(state == "F")
+  ) +
+  theme_bw() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(expression(paste(bold("Food "), bold(" density")))) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Time since model initialised (Days)",
+       y = "Food in habitat (mg)",
+       colour = 'Stage in Life-Cycle')
+
+gg5 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.7,
+    data = out_df_long %>%
+      filter(state == "tau_L")
+  ) +
+  theme_bw() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(expression(paste(bold("Dev Time ")))) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Time since model initialised (Days)",
+       y = "Time (Days)",
+       colour = 'Stage in Life-Cycle')
+gg6 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.7,
+    data = out_df_long %>%
+      filter(state == "wing_length")
+  ) +
+  theme_bw() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(expression(paste(bold("Wing Length")))) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Time since model initialised (Days)",
+       y = "Length (mm)",
+       colour = 'Stage in Life-Cycle')
+
+gg7 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.7,
+    data = out_df_long %>%
+      filter(state == "fecundity")
+  ) +
+  theme_bw() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(expression(paste(bold("Fecundity")))) +
+  theme(axis.title.x = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "bold"),
+        legend.position = "none") + 
+  labs(x = "Time since model initialised (Days)",
+       y = "Eggs hacthed per adult mosquito per day",
+       colour = 'Stage in Life-Cycle')
+
+print(gg3)
+}
+
+equilibria3_complex_dde<-function(muL = 0.248, muP_White = 0.25, muP_HG = 0.05, 
+                                  muP = 0.395, muN_White = 0.096, 
+                                  muN_HG = 0.1, muN = 0.091, TP_White = 0.64,
+                                  TP = 1, beta = 21.19, k = 6.2, e = 5.7,
+                                  q0 = 30, K_W = 1000, G_0 = 200, g_hg = 0.001,
+                                  equal_larvae = TRUE, fixed_larvae = FALSE, 
+                                  fixed_adults = FALSE, tolerance = 0.005){
+  
+  ##*******White equilibrium*******
+  
+  dE <- 6.64 #development time of early instar larvae 
+  dL <- 3.72 #development time of late instar larvae
+  muE0 <- 0.034 #density-independent mortality of early instar larvae
+  muL0 <- 0.035 #density-independent mortality of late instar larvae
+  gamma_w <- 13.25 #coefficient of density-dependent larval mortality
+  #muN <- 0.096 #daily adult mortality 
+  #TP <- 1 #development time of pupae
+  #muP <- 0.25 #daily mortality of pupae
+  beta <- beta
+  
+  omega_term1<- -0.5*(gamma_w*muL0/muE0 - dE/dL + (gamma_w-1)*muL0*dE)
+  omega_term2<- 0.25*(gamma_w*muL0/muE0 - dE/dL + (gamma_w-1)*muL0*dE)^2
+  omega_term3<- gamma_w*beta*muL0*dE/(2*muE0*muN_White*dL*(1+TP_White*muP_White))
+  omega<- omega_term1 + sqrt(omega_term2+omega_term3)
+  
+  K<-K_W #carrying capacity
+  
+  N_term1<-K/(2*dL*muN_White*(1+TP_White*muP_White)*gamma_w*(omega+1))
+  N_term2<-omega/(muL0*dE)-1/(muL0*dL)-1
+  Neq_White<-ifelse(2*N_term1*N_term2 >= 0, 2*N_term1*N_term2,0)
+  Leq_White <- ifelse(K*N_term2/gamma_w >= 0, K*N_term2/gamma_w, 0)
+  
+  elarv_death_White = muE0*(1 + Leq_White/K)
+  llarv_death_White = muL0*(1 + gamma_w*Leq_White/K)
+  avlarv_death_White = elarv_death_White*omega/(omega+1) + llarv_death_White/(omega+1)
+  dur_el_White <- dE
+  #Leq_White*omega/((omega+1)*dE*beta*(Neq_White/2))
+  dur_ll_White <- dL
+  #dE/(dL*omega)
+  sur_el_White <- elarv_death_White*dE
+  #Leq_White*omega/((omega+1)*dE*beta*(Neq_White/2))
+  sur_ll_White <- elarv_death_White*dL
+  #dE/(dL*omega)
+  sur_White = exp(-(sur_el_White + sur_ll_White))
+  sur_White_2 = ifelse(Neq_White > 0, Leq_White/((omega + 1)*dL*beta*(Neq_White/2)), NA)
+  
+  ##*******Ollie equilibrium*******
+  #maximum female fecundity
+  kappa = k
+  eta = e
+  lambda=0.42 #rate of decay of female fecundity with increasing larval development time
+  muL = muL #density-independent mortality of larvae
+  gamma=1 #coefficient relating larval growth to food consumption
+  #muN=0.1 #adult daily mortality
+  #muP=0.1 #pupae daily mortality
+  #TP=2 #fixed pupal development time
+  mP=3/2 #mass at which larvae complete development
+  
+  equi_tau_L_fixed <- find_tau_L(kappa = 6.2,
+                                 lambda = lambda,
+                                 mu_L = muL,
+                                 eta = 5.7,
+                                 mu_N = muN,
+                                 mu_P = muP,
+                                 tau_P = TP
+  )$root
+  
+  
+  
+  #G0 = (K*(omega/(muL0*dE)-1/(muL0*dL)-1)*mP*(muL + lambda))/((gamma_w)*(5*lambda + log(kappa/(muN*(1+muP*TP)))))
+  g0 <- ifelse(equal_larvae == TRUE, 
+               Leq_White*mP/find_tau_L(kappa = kappa,
+                                       lambda = lambda,
+                                       mu_L = muL,
+                                       eta = eta,
+                                       mu_N = muN,
+                                       mu_P = muP,
+                                       tau_P = TP
+               )$root, 
+               ifelse(fixed_larvae == TRUE, 
+                      Leq_White*mP/equi_tau_L_fixed, 
+                      ifelse(fixed_adults == TRUE, 
+                             Neq_White*(mP*(1 - exp(-muL*equi_tau_L_fixed))*(5.7 + 6.2*exp(-0.42*(equi_tau_L_fixed-5))))/(muL*equi_tau_L_fixed),
+                             G_0)))
+  mod <- odin::odin({
+    deriv(F) <- G_0 - A_max * L * F / (K_F + F)
+    
+    N_lag_n <- delay(N, tau_L)
+    F_lag_n <- delay(F, tau_L)
+    tau_lag_n <- delay(tau_L, tau_P)
+    tau_lag_2n <- delay(tau_L, tau_L + tau_P)
+    N_lag <- if (t - tau_L <= 0)
+      N_0
+    else
+      N_lag_n
+    F_lag <- if (t - tau_L <= 0)
+      F_0
+    else
+      F_lag_n
+    tau_lag <-
+      if (t - tau_P <= 0)
+        (mpovgamma * (K_F + F_0) / (A_max * F_0))
+    else
+      tau_lag_n
+    tau_lag_2 <-
+      if (t - tau_L - tau_P <= 0)
+        (mpovgamma * (K_F + F_0) / (A_max * F_0))
+    else
+      tau_lag_2n
+    
+    
+    deriv(L) <-
+      (eta + kappa * exp(-lambda * (tau_lag - 5))) * N -  (eta + kappa * exp(-lambda *
+                                                                               (tau_lag_2 - 5))) * N_lag * exp(-mu_L * tau_L) * F * (K_F + F_lag) / (F_lag *
+                                                                                                                                                       (K_F + F)) - mu_L * L
+    deriv(P) <-
+      (eta + kappa * exp(-lambda * (tau_lag_2 - 5))) * N_lag * exp(-mu_L * tau_L) *
+      F * (K_F + F_lag) / (F_lag * (K_F + F)) - P / tau_P - mu_P * P
+    
+    deriv(N) <- I_N + P / tau_P - mu_N * N
+    deriv(tau_L) <- 1 - F * (K_F + F_lag) / (F_lag * (K_F + F))
+    output(dev) <- tau_lag
+    output(wl) <- ((0.13 * tau_lag - 0.35) / (0.0037 * (tau_lag  - 5))) ^ (1 /
+                                                                             4.08)
+    output(fec) <- eta + kappa * exp(-lambda * (tau_lag - 5))
+    output(sur) <- exp(-mu_L*tau_L)
+    
+    I_N <- if (t <= 0)
+      0
+    else if (0 < t && t <= T_1)
+      J_1
+    else
+      0
+    
+    initial(F) <- F_0
+    initial(L) <- L_0
+    initial(P) <- P_0
+    initial(N) <- N_0
+    initial(tau_L) <- (mpovgamma * (K_F + F_0) / (A_max * F_0))
+    
+    G_0 <- user(200)
+    A_max <- user(0.3)
+    K_F <- user(10)
+    mu_L <- user(0.248)
+    mu_P <- user(0.395)
+    mu_N <- user(0.091)
+    tau_P <- user(1)
+    kappa <- user(6.2)
+    lambda <- user(0.42)
+    eta <- user(5.7)
+    mpovgamma <- user(1.5)
+    
+    F_0 <- user(20)
+    T_1 <- user(0.001)
+    J_1 <- user(100000)
+    L_0 <- user(0)
+    P_0 <- user(0)
+    N_0 <- user(0)
+    
+  })
+  
+  t <- seq(0, 18250, length.out = 18251)
+  mod_1 <- mod$new()
+  mod_1$set_user(G_0 = g0)
+  mod_1$set_user(kappa = k)
+  mod_1$set_user(eta = e)
+  mod_1$set_user(mu_L = muL)
+  mod_1$set_user(mu_P = muP)
+  mod_1$set_user(mu_N = muN)
+  mod_1$set_user(tau_P = TP)
+  
+  out <- mod_1$run(t)
+  
+  if (all(abs(out[18151:18250,2] - out[18251,2]) < 0.00001) == TRUE &&
+      all(abs(out[18151:18250,3] - out[18251,3]) < 0.00001) == TRUE &&
+      all(abs(out[18151:18250,4] - out[18251,4]) < 0.00001) == TRUE &&
+      all(abs(out[18151:18250,5] - out[18251,5]) < 0.00001) == TRUE &&
+      all(abs(out[18151:18250,6] - out[18251,6]) < 0.00001) == TRUE){
+    
+    Leq_Ollie <- out[18251, 3]
+    Neq_Ollie <- out[18251, 5]
+    larv_dev_time_Ollie <- out[18251, 6]
+    fec_Ollie <- out[18251,9]
+  } 
+  
+  else if(all(out[18151:18251,3] < 0.00001) == TRUE &&
+          all(out[18151:18251,4] < 0.00001) == TRUE &&
+          all(out[18151:18251,5] < 0.00001) == TRUE){
+    Leq_Ollie <- out[18251, 3]
+    Neq_Ollie <- out[18251, 5]
+    larv_dev_time_Ollie <- out[18251, 6]
+    fec_Ollie <- out[18251, 9]
+  }
+  
+  else if(all(out[1001:(length + 1), 2] == cummax(out[1001:(length+1), 2]))){
+    Leq_Ollie <- NA
+    Neq_Ollie <- NA
+    larv_dev_time_Ollie <- NA
+    fec_Ollie <- NA
+    }
+  
+  else{
+    Leq_Ollie <- tryCatch(error = function(cnd) NA, period_average_calculator(out,3, "mean", tolerance))
+    Neq_Ollie <- tryCatch(error = function(cnd) NA, period_average_calculator(out,5, "mean", tolerance))
+    larv_dev_time_Ollie <- tryCatch(error = function(cnd) NA, period_average_calculator(out,6, "mean", tolerance))
+    fec_Ollie <- tryCatch(error = function(cnd) NA, period_average_calculator(out,9, "mean", tolerance))
+  }
+  
+  
+  ##*******Hancock & Godfray equilibrium*******
+  #muL=0.1 #density-independent mortality of larvae
+  #muN=0.1 #adult daily mortality
+  mu0=0.05 #egg daily mortality
+  #muP=0.1 #pupae daily mortality
+  TL=10 #fixed larval development time
+  #TP=2 #fixed pupal development time
+  T0=2 #fixed egg development time
+  muL_HG <- 0.1
+  q0 <- q0
+  
+  thetaL=exp(-muL_HG*TL) #first instar to pupal survival
+  thetaP=exp(-muP_HG*TP) #pupal survival
+  theta0=exp(-mu0*T0) #egg survival
+  
+  Clambda = q0*theta0*thetaL*thetaP/muN_HG
+  Clambda_fixed = 30*theta0*thetaL*thetaP/muN_HG
+  gL_fixed <-log(Clambda_fixed)/TL
+  gamma = ifelse(equal_larvae==TRUE,
+                 2*log(Clambda)/(Leq_White*TL), 
+                 ifelse(fixed_larvae == TRUE, 
+                        2*log(Clambda_fixed)/(Leq_White*TL), 
+                        ifelse(fixed_adults == TRUE, 
+                               2*log(Clambda_fixed)*(muL_HG + gL_fixed)/((30*theta0-muN_HG/thetaP)*(Neq_White*TL)), 
+                               g_hg)))
+  omegaL<-1/Clambda
+  gL<-log(Clambda)/TL
+  if(q0 > muN_HG/(exp(-muL_HG*TL)*exp(-muP_HG*TP)*exp(-mu0*T0))){
+    Leq_HG=2*log(Clambda)/(gamma*TL)
+    Neq_HG=Leq_HG*(muL_HG + gL)/(q0*theta0-muN_HG/thetaP)}
+  else{
+    Leq_HG = 0
+    Neq_HG = 0
+  }
+  
+  output<-list(Leq_White = Leq_White,
+               Leq_HG = Leq_HG,
+               Leq_Ollie = Leq_Ollie,
+               elarv_death_White = elarv_death_White,
+               llarv_death_White = llarv_death_White,
+               avlarv_death_White = avlarv_death_White,
+               larv_death_HG = muL_HG + gamma*Leq_HG,
+               larv_death_Ollie = muL,
+               larv_dev_time_White = dE + dL,
+               larv_dev_time_HG = TL,
+               larv_dev_time_Ollie= larv_dev_time_Ollie,
+               Neq_White=Neq_White,
+               Neq_HG = Neq_HG,
+               Neq_Ollie=Neq_Ollie,
+               gamma = gamma, 
+               G0 = g0,
+               fec_Ollie = fec_Ollie,
+               sur_White = sur_White,
+               sur_White_2 = sur_White_2)
+  return (output)
+}
+
+equilibria3_White <- function(muP_White = 0.25, muN_White = 0.096, TP_White = 0.64, 
+                              beta = 21.19, K_W = 1000, de = 6.64, dl = 3.72, 
+                              mue0 = 0.034, mul0 = 0.035, gw = 13.25){
+  
+  ##*******White equilibrium*******
+  
+  dE <- de #development time of early instar larvae 
+  dL <- dl #development time of late instar larvae
+  muE0 <- mue0 #density-independent mortality of early instar larvae
+  muL0 <- mul0 #density-independent mortality of late instar larvae
+  gamma_w <- gw #coefficient of density-dependent larval mortality
+  #muN <- 0.096 #daily adult mortality 
+  #TP <- 1 #development time of pupae
+  #muP <- 0.25 #daily mortality of pupae
+  beta <- beta
+  
+  omega_term1<- -0.5*(gamma_w*muL0/muE0 - dE/dL + (gamma_w-1)*muL0*dE)
+  omega_term2<- 0.25*(gamma_w*muL0/muE0 - dE/dL + (gamma_w-1)*muL0*dE)^2
+  omega_term3<- gamma_w*beta*muL0*dE/(2*muE0*muN_White*dL*(1+TP_White*muP_White))
+  omega<- omega_term1 + sqrt(omega_term2+omega_term3)
+  
+  K<-K_W #carrying capacity
+  
+  N_term1<-K/(2*dL*muN_White*(1+TP_White*muP_White)*gamma_w*(omega+1))
+  N_term2<-omega/(muL0*dE)-1/(muL0*dL)-1
+  Neq_White<-ifelse(2*N_term1*N_term2 >= 0, 2*N_term1*N_term2,0)
+  Leq_White <- ifelse(K*N_term2/gamma_w >= 0, K*N_term2/gamma_w, 0)
+  
+  elarv_death_White = muE0*(1 + Leq_White/K)
+  llarv_death_White = muL0*(1 + gamma_w*Leq_White/K)
+  avlarv_death_White = elarv_death_White*omega/(omega+1) + llarv_death_White/(omega+1)
+  dur_el_White <- dE
+  #Leq_White*omega/((omega+1)*dE*beta*(Neq_White/2))
+  dur_ll_White <- dL
+  #dE/(dL*omega)
+  sur_el_White <- elarv_death_White*dE
+  #Leq_White*omega/((omega+1)*dE*beta*(Neq_White/2))
+  sur_ll_White <- elarv_death_White*dL
+  #dE/(dL*omega)
+  sur_White = exp(-(sur_el_White + sur_ll_White))
+  sur_White_2 = ifelse(Neq_White > 0, Leq_White/((omega + 1)*dL*beta*(Neq_White/2)), NA)
+  
+  
+  output<-list(Leq_White = Leq_White,
+               elarv_death_White = elarv_death_White,
+               llarv_death_White = llarv_death_White,
+               avlarv_death_White = avlarv_death_White,
+               larv_dev_time_White = dE + dL,
+               Neq_White=Neq_White,
+               sur_White = sur_White,
+               sur_White_2 = sur_White_2)
+  return (output)
+}
+
+equilibria3_HG<-function(muP_White = 0.25, muP_HG = 0.05, mu0 = 0.05,
+                         muN_White = 0.096, TP_White = 0.64, TP_HG = 1, muN_HG = 0.1,
+                         beta = 21.19, q0 = 30, K_W = 1000, g_hg = 0.001, 
+                         de = 6.64, dl = 3.72, mue0 = 0.034, mul0 = 0.035, 
+                         gw = 13.25, tl = 10, t0 = 2, mulhg = 0.1, 
+                         equal_larvae = TRUE, fixed_larvae = FALSE, 
+                         fixed_adults = FALSE){
+  
+  ##*******White equilibrium*******
+  
+  dE <- de #development time of early instar larvae 
+  dL <- dl #development time of late instar larvae
+  muE0 <- mue0 #density-independent mortality of early instar larvae
+  muL0 <- mul0 #density-independent mortality of late instar larvae
+  gamma_w <- gw #coefficient of density-dependent larval mortality
+  #muN <- 0.096 #daily adult mortality 
+  #TP <- 1 #development time of pupae
+  #muP <- 0.25 #daily mortality of pupae
+  beta <- beta
+  
+  omega_term1<- -0.5*(gamma_w*muL0/muE0 - dE/dL + (gamma_w-1)*muL0*dE)
+  omega_term2<- 0.25*(gamma_w*muL0/muE0 - dE/dL + (gamma_w-1)*muL0*dE)^2
+  omega_term3<- gamma_w*beta*muL0*dE/(2*muE0*muN_White*dL*(1+TP_White*muP_White))
+  omega<- omega_term1 + sqrt(omega_term2+omega_term3)
+  
+  K<-K_W #carrying capacity
+  
+  N_term1<-K/(2*dL*muN_White*(1+TP_White*muP_White)*gamma_w*(omega+1))
+  N_term2<-omega/(muL0*dE)-1/(muL0*dL)-1
+  Neq_White<-ifelse(2*N_term1*N_term2 >= 0, 2*N_term1*N_term2,0)
+  Leq_White <- ifelse(K*N_term2/gamma_w >= 0, K*N_term2/gamma_w, 0)
+  
+  elarv_death_White = muE0*(1 + Leq_White/K)
+  llarv_death_White = muL0*(1 + gamma_w*Leq_White/K)
+  avlarv_death_White = elarv_death_White*omega/(omega+1) + llarv_death_White/(omega+1)
+  dur_el_White <- dE
+  #Leq_White*omega/((omega+1)*dE*beta*(Neq_White/2))
+  dur_ll_White <- dL
+  #dE/(dL*omega)
+  sur_el_White <- elarv_death_White*dE
+  #Leq_White*omega/((omega+1)*dE*beta*(Neq_White/2))
+  sur_ll_White <- elarv_death_White*dL
+  #dE/(dL*omega)
+  sur_White = exp(-(sur_el_White + sur_ll_White))
+  sur_White_2 = ifelse(Neq_White > 0, Leq_White/((omega + 1)*dL*beta*(Neq_White/2)), NA)
+  
+  ##*******Hancock & Godfray equilibrium*******
+  #muL=0.1 #density-independent mortality of larvae
+  #muN=0.1 #adult daily mortality
+  mu0 = mu0 #egg daily mortality
+  #muP=0.1 #pupae daily mortality
+  TL = tl #fixed larval development time
+  #TP=2 #fixed pupal development time
+  T0 = t0 #fixed egg development time
+  muL_HG <- mulhg
+  q0 <- q0
+  
+  thetaL=exp(-muL_HG*TL) #first instar to pupal survival
+  thetaP=exp(-muP_HG*TP_HG) #pupal survival
+  theta0=exp(-mu0*T0) #egg survival
+  
+  Clambda = q0*theta0*thetaL*thetaP/muN_HG
+  Clambda_fixed = 30*theta0*thetaL*thetaP/muN_HG
+  gL_fixed <-log(Clambda_fixed)/TL
+  gamma = ifelse(equal_larvae==TRUE,
+                 2*log(Clambda)/(Leq_White*TL), 
+                 ifelse(fixed_larvae == TRUE, 
+                        2*log(Clambda_fixed)/(Leq_White*TL), 
+                        ifelse(fixed_adults == TRUE, 
+                               2*log(Clambda_fixed)*(muL_HG + gL_fixed)/((30*theta0-muN_HG/thetaP)*(Neq_White*TL)), 
+                               g_hg)))
+  omegaL<-1/Clambda
+  gL<-log(Clambda)/TL
+  if(q0 > muN_HG/(exp(-muL_HG*TL)*exp(-muP_HG*TP_HG)*exp(-mu0*T0))){
+    Leq_HG=2*log(Clambda)/(gamma*TL)
+    Neq_HG=Leq_HG*(muL_HG + gL)/(q0*theta0-muN_HG/thetaP)}
+  else{
+    Leq_HG = 0
+    Neq_HG = 0
+  }
+  
+  output<-list(Leq_White = Leq_White,
+               Leq_HG = Leq_HG,
+               elarv_death_White = elarv_death_White,
+               llarv_death_White = llarv_death_White,
+               avlarv_death_White = avlarv_death_White,
+               larv_death_HG = muL_HG + gamma*Leq_HG,
+               larv_dev_time_White = dE + dL,
+               larv_dev_time_HG = TL,
+               Neq_White=Neq_White,
+               Neq_HG = Neq_HG,
+               gamma = gamma, 
+               sur_White = sur_White,
+               sur_White_2 = sur_White_2)
+  return (output)
+}
+
+equilibria3_Ollie <- function(muL = 0.248, muP = 0.395, muP_White= 0.25, 
+                              muN = 0.091, muN_White = 0.096, TP = 1, TP_White = 0.64,
+                              beta = 21.19, k = 6.2, e = 5.7, K_W = 1000, 
+                              G_0 = 200, de = 6.64, dl = 3.72, mue0 = 0.034,
+                              mul0 = 0.035, gw = 13.25, l = 0.42, mp = 1.5,
+                              amax = 0.3, kf = 10, equal_larvae = TRUE, 
+                              fixed_larvae = FALSE, fixed_adults = FALSE,
+                              length = 18250, tolerance = 0.005){
+  
+  ##*******White equilibrium*******
+  
+  dE <- de #development time of early instar larvae 
+  dL <- dl #development time of late instar larvae
+  muE0 <- mue0 #density-independent mortality of early instar larvae
+  muL0 <- mul0 #density-independent mortality of late instar larvae
+  gamma_w <- gw #coefficient of density-dependent larval mortality
+  #muN <- 0.096 #daily adult mortality 
+  #TP <- 1 #development time of pupae
+  #muP <- 0.25 #daily mortality of pupae
+  beta <- beta
+  
+  omega_term1<- -0.5*(gamma_w*muL0/muE0 - dE/dL + (gamma_w-1)*muL0*dE)
+  omega_term2<- 0.25*(gamma_w*muL0/muE0 - dE/dL + (gamma_w-1)*muL0*dE)^2
+  omega_term3<- gamma_w*beta*muL0*dE/(2*muE0*muN_White*dL*(1+TP_White*muP_White))
+  omega<- omega_term1 + sqrt(omega_term2+omega_term3)
+  
+  K<-K_W #carrying capacity
+  
+  N_term1<-K/(2*dL*muN_White*(1+TP_White*muP_White)*gamma_w*(omega+1))
+  N_term2<-omega/(muL0*dE)-1/(muL0*dL)-1
+  Neq_White <-ifelse(2*N_term1*N_term2 >= 0, 2*N_term1*N_term2,0)
+  Leq_White <- ifelse(K*N_term2/gamma_w >= 0, K*N_term2/gamma_w, 0)
+  
+  elarv_death_White = muE0*(1 + Leq_White/K)
+  llarv_death_White = muL0*(1 + gamma_w*Leq_White/K)
+  avlarv_death_White = elarv_death_White*omega/(omega+1) + llarv_death_White/(omega+1)
+  dur_el_White <- dE
+  #Leq_White*omega/((omega+1)*dE*beta*(Neq_White/2))
+  dur_ll_White <- dL
+  #dE/(dL*omega)
+  sur_el_White <- elarv_death_White*dE
+  #Leq_White*omega/((omega+1)*dE*beta*(Neq_White/2))
+  sur_ll_White <- elarv_death_White*dL
+  #dE/(dL*omega)
+  sur_White = exp(-(sur_el_White + sur_ll_White))
+  sur_White_2 = ifelse(Neq_White > 0, Leq_White/((omega + 1)*dL*beta*(Neq_White/2)), NA)
+  
+  ##*******Ollie equilibrium*******
+  #maximum female fecundity
+  kappa = k
+  eta = e
+  lambda= l #rate of decay of female fecundity with increasing larval development time
+  muL = muL #density-independent mortality of larvae
+  gamma=1 #coefficient relating larval growth to food consumption
+  #muN=0.1 #adult daily mortality
+  #muP=0.1 #pupae daily mortality
+  #TP=2 #fixed pupal development time
+  mP= mp #mass at which larvae complete development
+  
+  equi_tau_L_fixed <- find_tau_L(kappa = 6.2,
+                                 lambda = lambda,
+                                 mu_L = muL,
+                                 eta = 5.7,
+                                 mu_N = muN,
+                                 mu_P = muP,
+                                 tau_P = TP
+  )$root
+  
+  
+  
+  #G0 = (K*(omega/(muL0*dE)-1/(muL0*dL)-1)*mP*(muL + lambda))/((gamma_w)*(5*lambda + log(kappa/(muN*(1+muP*TP)))))
+  g0 <- ifelse(equal_larvae == TRUE, 
+               Leq_White*mP/find_tau_L(kappa = kappa,
+                                       lambda = lambda,
+                                       mu_L = muL,
+                                       eta = eta,
+                                       mu_N = muN,
+                                       mu_P = muP,
+                                       tau_P = TP
+               )$root, 
+               ifelse(fixed_larvae == TRUE, 
+                      Leq_White*mP/equi_tau_L_fixed, 
+                      ifelse(fixed_adults == TRUE, 
+                             Neq_White*(mP*(1 - exp(-muL*equi_tau_L_fixed))*(5.7 + 6.2*exp(-lambda*(equi_tau_L_fixed-5))))/(muL*equi_tau_L_fixed),
+                             G_0)))
+  mod <- odin::odin({
+    deriv(F) <- G_0 - A_max * L * F / (K_F + F)
+    
+    N_lag_n <- delay(N, tau_L)
+    F_lag_n <- delay(F, tau_L)
+    tau_lag_n <- delay(tau_L, tau_P)
+    tau_lag_2n <- delay(tau_L, tau_L + tau_P)
+    N_lag <- if (t - tau_L <= 0)
+      N_0
+    else
+      N_lag_n
+    F_lag <- if (t - tau_L <= 0)
+      F_0
+    else
+      F_lag_n
+    tau_lag <-
+      if (t - tau_P <= 0)
+        (mpovgamma * (K_F + F_0) / (A_max * F_0))
+    else
+      tau_lag_n
+    tau_lag_2 <-
+      if (t - tau_L - tau_P <= 0)
+        (mpovgamma * (K_F + F_0) / (A_max * F_0))
+    else
+      tau_lag_2n
+    
+    
+    deriv(L) <-
+      (eta + kappa * exp(-lambda * (tau_lag - 5))) * N -  (eta + kappa * exp(-lambda *
+                                                                               (tau_lag_2 - 5))) * N_lag * exp(-mu_L * tau_L) * F * (K_F + F_lag) / (F_lag *
+                                                                                                                                                       (K_F + F)) - mu_L * L
+    deriv(P) <-
+      (eta + kappa * exp(-lambda * (tau_lag_2 - 5))) * N_lag * exp(-mu_L * tau_L) *
+      F * (K_F + F_lag) / (F_lag * (K_F + F)) - P / tau_P - mu_P * P
+    
+    deriv(N) <- I_N + P / tau_P - mu_N * N
+    deriv(tau_L) <- 1 - F * (K_F + F_lag) / (F_lag * (K_F + F))
+    output(dev) <- tau_lag
+    output(wl) <- ((0.13 * tau_lag - 0.35) / (0.0037 * (tau_lag  - 5))) ^ (1 /
+                                                                             4.08)
+    output(fec) <- eta + kappa * exp(-lambda * (tau_lag - 5))
+    output(sur) <- exp(-mu_L*tau_L)
+    
+    I_N <- if (t <= 0)
+      0
+    else if (0 < t && t <= T_1)
+      J_1
+    else
+      0
+    
+    initial(F) <- F_0
+    initial(L) <- L_0
+    initial(P) <- P_0
+    initial(N) <- N_0
+    initial(tau_L) <- (mpovgamma * (K_F + F_0) / (A_max * F_0))
+    
+    G_0 <- user(200)
+    A_max <- user(0.3)
+    K_F <- user(10)
+    mu_L <- user(0.248)
+    mu_P <- user(0.395)
+    mu_N <- user(0.091)
+    tau_P <- user(1)
+    kappa <- user(6.2)
+    lambda <- user(0.42)
+    eta <- user(5.7)
+    mpovgamma <- user(1.5)
+    
+    F_0 <- user(20)
+    T_1 <- user(0.001)
+    J_1 <- user(100000)
+    L_0 <- user(0)
+    P_0 <- user(0)
+    N_0 <- user(0)
+    
+  })
+  
+  t <- seq(0, length, length.out = length+1)
+  mod_1 <- mod$new()
+  mod_1$set_user(G_0 = g0)
+  mod_1$set_user(kappa = k)
+  mod_1$set_user(eta = e)
+  mod_1$set_user(mu_L = muL)
+  mod_1$set_user(mu_P = muP)
+  mod_1$set_user(mu_N = muN)
+  mod_1$set_user(tau_P = TP)
+  mod_1$set_user(lambda = l)
+  mod_1$set_user(mpovgamma = mP)
+  mod_1$set_user(A_max = amax)
+  mod_1$set_user(K_F = kf)
+  
+  out <- mod_1$run(t)
+  
+  if (all(abs(out[(length - 999):length,2] - out[(length+1),2]) < 0.00001) == TRUE &&
+      all(abs(out[(length - 999):length,3] - out[(length+1),3]) < 0.00001) == TRUE &&
+      all(abs(out[(length - 999):length,4] - out[(length+1),4]) < 0.00001) == TRUE &&
+      all(abs(out[(length - 999):length,5] - out[(length+1),5]) < 0.00001) == TRUE &&
+      all(abs(out[(length - 999):length,6] - out[(length+1),6]) < 0.00001) == TRUE){
+    
+    Leq_Ollie <- out[(length+1), 3]
+    Neq_Ollie <- out[(length+1), 5]
+    larv_dev_time_Ollie <- out[(length+1), 6]
+    fec_Ollie <- out[(length+1),9]
+  } 
+  
+  else if(all(out[(length - 999):(length+1),3] < 0.00001) == TRUE &&
+          all(out[(length - 999):(length+1),4] < 0.00001) == TRUE &&
+          all(out[(length - 999):(length+1),5] < 0.00001) == TRUE){
+    Leq_Ollie <- out[(length+1), 3]
+    Neq_Ollie <- out[(length+1), 5]
+    larv_dev_time_Ollie <- out[(length+1), 6]
+    fec_Ollie <- out[(length+1), 9]
+  }
+  
+  else if(all(out[1001:(length + 1), 2] == cummax(out[1001:(length+1), 2]))){
+    Leq_Ollie <- NA
+    Neq_Ollie <- NA
+    larv_dev_time_Ollie <- NA
+    fec_Ollie <- NA
+    }
+  
+  
+  else{
+    Leq_Ollie <- tryCatch(error = function(cnd) NA, period_average_calculator(out,3, "mean", tolerance))
+    Neq_Ollie <- tryCatch(error = function(cnd) NA, period_average_calculator(out,5, "mean", tolerance))
+    larv_dev_time_Ollie <- tryCatch(error = function(cnd) NA, period_average_calculator(out,6, "mean", tolerance))
+    fec_Ollie <- tryCatch(error = function(cnd) NA, period_average_calculator(out,9, "mean", tolerance))
+  }
+  
+  output<-list(Leq_White = Leq_White,
+               Leq_Ollie = Leq_Ollie,
+               elarv_death_White = elarv_death_White,
+               llarv_death_White = llarv_death_White,
+               avlarv_death_White = avlarv_death_White,
+               larv_death_Ollie = muL,
+               larv_dev_time_White = dE + dL,
+               larv_dev_time_Ollie= larv_dev_time_Ollie,
+               Neq_White=Neq_White,
+               Neq_Ollie=Neq_Ollie,
+               G0 = g0,
+               fec_Ollie = fec_Ollie,
+               sur_White = sur_White,
+               sur_White_2 = sur_White_2)
+  return (output)
+}
+
+equi3_vary_beta <- function(min, max, by, new_params = FALSE, params){
+  modi <- seq(min, max, by)
+  L_grid <- rep(NA, length(modi))
+  N_grid <- rep(NA, length(modi))
+  sur_grid <- rep(NA, length(modi))
+  sur_grid_2 <- rep(NA, length(modi))
+  if(new_params == FALSE){
+    for (i in 1:length(modi)){
+    equi3 <- equilibria3_White(
+    beta = ((i - 1)*by + min)*21.19)
+    L_grid[i] <- equi3$Leq_White
+    N_grid[i] <- equi3$Neq_White
+    sur_grid[i] <- equi3$sur_White
+    sur_grid_2[i] <- equi3$sur_White_2
+  }} 
+    else{
+  for (i in 1:length(modi)){
+    equi3 <- equilibria3_White(
+      beta = (((i - 1)*by + min)*21.19), 
+      de = params$dE_draws_random, dl = params$dL_draws_random, 
+      muP_White = params$muP_draws_random, muN_White = params$muN_White_draws_random, 
+      TP_White = params$taup_draws_random,mue0 = params$muE0_draws_random, 
+      mul0 = params$muL0_draws_random, gw = params$gamma_w_draws_random)
+    L_grid[i] <- equi3$Leq_White
+    N_grid[i] <- equi3$Neq_White
+    sur_grid[i] <- equi3$sur_White
+    sur_grid_2[i] <- equi3$sur_White_2
+    
+  }}
+  
+  
+  equi <-
+    as.data.frame(cbind(modi, L_grid, N_grid, sur_grid, sur_grid_2))
+  equi <- equi %>% rename(
+    Larval = L_grid,
+    Adult = N_grid,
+    Survival = sur_grid,
+    Survival_2 = sur_grid_2
+  ) %>%
+    pivot_longer(cols = !c(modi),
+                 values_to = "equi_value",
+                 names_to = "state")
+  equi
+}
+
+equi3_vary_q0 <- function(min, max, by, fix, new_params = FALSE, params,
+                          g_hg){
+  modi <- seq(min, max, by)
+  L_grid <- rep(NA, length(modi))
+  N_grid <- rep(NA, length(modi))
+  sur_grid <- rep(NA, length(modi))
+  if(new_params == FALSE){
+    for (i in 1:length(modi)){
+    equi3 <- equilibria3_HG(
+      q0 = ((i - 1)*by + min)*30,
+      equal_larvae = FALSE,
+      fixed_larvae = ifelse(fix == "larvae", TRUE, FALSE),
+      fixed_adults = ifelse(fix == "adults", TRUE, FALSE))
+    L_grid[i] <- equi3$Leq_HG
+    N_grid[i] <- equi3$Neq_HG
+    sur_grid[i] <- exp(-10*(L_grid[i]*equi3$gamma + 0.1))
+  }}
+  else{
+  for (i in 1:length(modi)){
+    equi3 <- equilibria3_HG(
+      muP_White = params$muP_White_draws_random, muP_HG = params$muP_HG_draws_random, 
+      muN_HG = params$muN_HG_draws_random, muN_White = params$muN_White_draws_random,
+      TP_HG = params$taup_draws_random, mu0 = params$mu0_draws_random,
+      de = params$dE_draws_random, dl = params$dL_draws_random, 
+      mue0 = params$muE0_draws_random, mul0 = params$muL0_draws_random, 
+      gw = params$gamma_w_draws_random, tl = params$TL_draws_random, 
+      t0 = params$T0_draws_random, mulhg = params$muL_HG_draws_random, 
+      q0 = ((i - 1)*by + min)*30,
+      g_hg = g_hg,
+      equal_larvae = FALSE,
+      fixed_larvae = ifelse(fix == "larvae", TRUE, FALSE),
+      fixed_adults = ifelse(fix == "adults", TRUE, FALSE))
+    L_grid[i] <- equi3$Leq_HG
+    N_grid[i] <- equi3$Neq_HG
+    sur_grid[i] <- exp(-params$TL_draws_random*(L_grid[i]*equi3$gamma + params$muL_HG_draws_random))
+    
+  }}
+  
+  equi <-
+    as.data.frame(cbind(modi, L_grid, N_grid, sur_grid))
+  equi <- equi %>% rename(
+    Larval = L_grid,
+    Adult = N_grid,
+    Survival = sur_grid
+  ) %>%
+    pivot_longer(cols = !c(modi),
+                 values_to = "equi_value",
+                 names_to = "state")
+  equi
+}
+
+equi3_vary_kappa <- function(min, max, by, fix, new_params = FALSE, params, 
+                             length = 18250, G_0, tolerance = 0.005){
+  if(new_params == FALSE){
+    modi <- seq(min, max, by)
+    L_grid <- rep(NA, length(modi))
+    N_grid <- rep(NA, length(modi))
+    tau_L_grid <- rep(NA, length(modi))
+    fec_grid <- rep(NA, length(modi))
+    sur_grid <- rep(NA, length(modi))
+    for (i in 1:length(modi)){
+      equi3 <- equilibria3_Ollie(
+        k = 6.2*((i-1)*by + min),
+        e = 5.7*((i-1)*by + min),
+        equal_larvae = FALSE,
+        fixed_larvae = ifelse(fix == "larvae", TRUE, FALSE),
+        fixed_adults = ifelse(fix == "adults", TRUE, FALSE),
+        length = length,
+        tolerance = tolerance)
+      L_grid[i] <- equi3$Leq_Ollie
+      N_grid[i] <- equi3$Neq_Ollie
+      tau_L_grid[i] <- equi3$larv_dev_time_Ollie
+      
+      fec_grid[i] <- 5.7*((i-1)*by + min) + (6.2*((i-1)*by + min)) * exp(-0.42 * (tau_L_grid[i] - 5))
+      sur_grid[i] <- exp(-0.248*tau_L_grid[i])
+    }
+  }
+  else{
+    modi <- seq(min, max, by)
+    L_grid <- rep(NA, length(modi))
+    N_grid <- rep(NA, length(modi))
+    tau_L_grid <- rep(NA, length(modi))
+    fec_grid <- rep(NA, length(modi))
+    sur_grid <- rep(NA, length(modi))
+    for (i in 1:length(modi)){
+      equi3 <- equilibria3_Ollie(
+        muL = params$muL_draws_random,
+        muP_White = params$muP_White_draws_random,
+        muP = params$muP_draws_random, 
+        muN_White = params$muN_White_draws_random,
+        muN = params$muN_draws_random, 
+        TP_White = params$TP_White_draws_random,
+        TP = params$taup_draws_random, 
+        k = 6.2*((i-1)*by + min),
+        e = 5.7*((i-1)*by + min),
+        de = params$dE_draws_random, 
+        dl = params$dL_draws_random,
+        mue0 = params$muE0_draws_random,
+        mul0 = params$muL0_draws_random, 
+        gw = params$gamma_w_draws_random, 
+        l = params$lambda_draws_random, 
+        mp = params$mp_draws_random, 
+        amax = params$amax_draws_random, 
+        kf = params$kf_draws_random, 
+        equal_larvae = FALSE,
+        fixed_larvae = ifelse(fix == "larvae", TRUE, FALSE),
+        fixed_adults = ifelse(fix == "adults", TRUE, FALSE),
+        G_0 = G_0,
+        length= length, 
+        tolerance = tolerance)
+      L_grid[i] <- equi3$Leq_Ollie
+      N_grid[i] <- equi3$Neq_Ollie
+      tau_L_grid[i] <- equi3$larv_dev_time_Ollie
+      
+      fec_grid[i] <- 5.7*((i-1)*by + min) + (6.2*((i-1)*by + min)) * exp(-params$lambda_draws_random * (tau_L_grid[i] - 5))
+      sur_grid[i] <- exp(-params$muL_draws_random*tau_L_grid[i])}}
+  
+  
+  equi <-
+    as.data.frame(cbind(modi, L_grid, N_grid, tau_L_grid, fec_grid, sur_grid))
+  equi <- equi %>% rename(
+    Larval = L_grid,
+    Adult = N_grid,
+    lar_dev_time = tau_L_grid,
+    fecundity = fec_grid,
+    Survival = sur_grid
+  ) %>%
+    pivot_longer(cols = !c(modi),
+                 values_to = "equi_value",
+                 names_to = "state")
+  equi
+}
+
+lhs <- function(){
+  
+  lambda_range <- seq(0.5*0.42, 1.5*0.42, length.out = 101)
+  mp_range <- seq(0.5*1.5, 1.5*1.5, length.out = 101)
+  kf_range <- seq(0.5*10, 1.5*10, length.out = 101)
+  amax_range <- seq(0.5*0.3, 1.5*0.3, length.out = 101)
+  muL_range <- seq(0.5*0.248, 1.5*0.248, length.out = 101)
+  muP_range <- seq(0.5*0.395, 1.5*0.395, length.out = 101)
+  muN_range <- seq(0.5*0.091, 1.5*0.091, length.out = 101)
+  taup_range <- seq(0.5*1, 1.5*1, length.out = 101)
+  muP_White_range <- seq(0.5*0.25, 1.5*0.25, length.out = 101)
+  muP_HG_range <- seq(0.5*0.05, 1.5*0.05, length.out = 101)
+  muN_White_range <- seq(0.5*0.096, 1.5*0.096, length.out = 101)
+  muN_HG_range <- seq(0.5*0.1, 1.5*0.1, length.out = 101)
+  TP_White_range <- seq(0.5*0.64, 1.5*0.64, length.out = 101)
+  mu0_range <- seq(0.5*0.05, 1.5*0.05, length.out = 101)
+  dE_range <- seq(0.5*6.64, 1.5*6.64, length.out = 101) 
+  dL_range <- seq(0.5*3.72, 1.5*3.72, length.out = 101)
+  muE0_range <- seq(0.5*0.034, 1.5*0.034, length.out = 101)
+  muL0_range <- seq(0.5*0.035, 1.5*0.035, length.out = 101)
+  gamma_w_range <- seq(0.5*13.25, 1.5*13.25, length.out = 101)
+  TL_range <- seq(0.5*10, 1.5*10, length.out = 101)
+  T0_range <- seq(0.5*2, 1.5*2, length.out = 101)
+  muL_HG_range <- seq(0.5*0.1, 1.5*0.1, length.out = 101)
+
+  
+  lambda_draws <- rep(NA, 100)
+  mp_draws <- rep(NA, 100)
+  kf_draws <- rep(NA, 100)
+  amax_draws <- rep(NA, 100)
+  muL_draws <- rep(NA, 100)
+  muP_draws <- rep(NA, 100)
+  muN_draws <- rep(NA, 100)
+  taup_draws <- rep(NA, 100)
+  muP_White_draws <- rep(NA, 100)
+  muP_HG_draws <- rep(NA, 100)
+  muN_White_draws <- rep(NA, 100)
+  muN_HG_draws <- rep(NA, 100)
+  TP_White_draws <- rep(NA, 100)
+  mu0_draws <- rep(NA, 100)
+  dE_draws <- rep(NA, 100)
+  dL_draws <- rep(NA, 100)
+  muE0_draws <- rep(NA, 100)
+  muL0_draws <- rep(NA, 100)
+  gamma_w_draws <- rep(NA, 100)
+  TL_draws <- rep(NA, 100)
+  T0_draws <- rep(NA, 100)
+  muL_HG_draws <- rep(NA, 100)
+  
+  
+  for(i in 1:100){
+    lambda_draws[i] <- runif(1, min = lambda_range[i], max = lambda_range[i+1])
+    mp_draws[i] <- runif(1, min = mp_range[i], max = mp_range[i+1])
+    kf_draws[i] <- runif(1, min = kf_range[i], max = kf_range[i+1])
+    amax_draws[i] <- runif(1, min = amax_range[i], max = amax_range[i+1])
+    muL_draws[i] <- runif(1, min = muL_range[i], max = muL_range[i+1])
+    muP_draws[i] <- runif(1, min = muP_range[i], max = muP_range[i+1])
+    muN_draws[i] <- runif(1, min = muN_range[i], max = muN_range[i+1])
+    muP_White_draws[i] <- runif(1, min = muP_White_range[i], max = muP_White_range[i+1])
+    muP_HG_draws[i] <- runif(1, min = muP_HG_range[i], max = muP_HG_range[i+1])
+    muN_White_draws[i] <- runif(1, min = muN_White_range[i], max = muN_White_range[i+1])
+    muN_HG_draws[i] <- runif(1, min = muN_HG_range[i], max = muN_HG_range[i+1])
+    TP_White_draws[i] <- runif(1, min = TP_White_range[i], max = TP_White_range[i+1])
+    mu0_draws[i] <- runif(1, min = mu0_range[i], max = mu0_range[i+1])
+    taup_draws[i] <- runif(1, min = taup_range[i], max = taup_range[i+1])
+    dE_draws[i] <- runif(1, min = dE_range[i], max = dE_range[i+1])
+    dL_draws[i] <- runif(1, min = dL_range[i], max = dL_range[i+1])
+    muE0_draws[i] <- runif(1, min = muE0_range[i], max = muE0_range[i+1])
+    muL0_draws[i] <- runif(1, min = muL0_range[i], max = muL0_range[i+1])
+    gamma_w_draws[i] <- runif(1, min = gamma_w_range[i], max = gamma_w_range[i+1])
+    TL_draws[i] <- runif(1, min = TL_range[i], max = TL_range[i+1])
+    T0_draws[i] <- runif(1, min = T0_range[i], max = T0_range[i+1])
+    muL_HG_draws[i] <- runif(1, min = muL_HG_range[i], max = muL_HG_range[i+1])
+  }
+  
+  lambda_draws_random <- lambda_draws[sample(100,100)]
+  mp_draws_random <- mp_draws[sample(100,100)]
+  kf_draws_random <- kf_draws[sample(100,100)]
+  amax_draws_random <- amax_draws[sample(100,100)]
+  muL_draws_random <- muL_draws[sample(100,100)]
+  muP_draws_random <- muP_draws[sample(100,100)]
+  muN_draws_random <- muN_draws[sample(100,100)]
+  taup_draws_random <- taup_draws[sample(100,100)]
+  muP_White_draws_random <- muP_White_draws[sample(100,100)]
+  muP_HG_draws_random <- muP_HG_draws[sample(100,100)]
+  muN_White_draws_random <- muN_White_draws[sample(100,100)]
+  muN_HG_draws_random <- muN_HG_draws[sample(100,100)]
+  TP_White_draws_random <- TP_White_draws[sample(100,100)]
+  mu0_draws_random <- mu0_draws[sample(100,100)]
+  dE_draws_random <- dE_draws[sample(100,100)]
+  dL_draws_random <- dL_draws[sample(100,100)]
+  muE0_draws_random <- muE0_draws[sample(100,100)]
+  muL0_draws_random <- muL0_draws[sample(100,100)]
+  gamma_w_draws_random <- gamma_w_draws[sample(100,100)]
+  TL_draws_random <- TL_draws[sample(100,100)]
+  T0_draws_random <- T0_draws[sample(100,100)]
+  muL_HG_draws_random <- muL_HG_draws[sample(100,100)]
+  
+  lhs <- as.data.frame(cbind(seq(1,100,1),
+                             lambda_draws_random, 
+                             mp_draws_random, 
+                             kf_draws_random,
+                             amax_draws_random,
+                             muL_draws_random,
+                             muP_draws_random,
+                             muN_draws_random,
+                             taup_draws_random,
+                             muP_White_draws_random,
+                             muP_HG_draws_random,
+                             muN_White_draws_random,
+                             muN_HG_draws_random,
+                             TP_White_draws_random,
+                             mu0_draws_random,
+                             dE_draws_random,
+                             dL_draws_random,
+                             muE0_draws_random,
+                             muL0_draws_random,
+                             gamma_w_draws_random,
+                             TL_draws_random,
+                             T0_draws_random,
+                             muL_HG_draws_random))
+  
+  lhs
+}
+
+test_longer_3plots <- function(run, length, G_0, tolerance){
+  x <- as.list(rep(NA, dim(run %>% 
+                            filter(is.na(equi_value) == TRUE) %>% 
+                            filter(state == "Adult"))[1]))
+
+for(i in 1:dim(run %>% 
+               filter(is.na(equi_value) == TRUE) %>% 
+               filter(state == "Adult"))[1]){
+  print(paste0("Progress: ", round((i-1)/dim(run %>% 
+               filter(is.na(equi_value) == TRUE) %>% 
+               filter(state == "Adult"))[1], digits = 3)*100, "%"))
+  dat <- run %>% 
+    filter(is.na(equi_value) == TRUE) %>%
+    filter(state == "Adult") %>%
+    select(modi)
+  dat2 <- run %>% 
+    filter(is.na(equi_value) == TRUE) %>%
+    filter(state == "Adult") %>%
+    select(id)
+  
+  x[[i]] <- equi3_vary_kappa(as.numeric(dat[i,]),as.numeric(dat[i,]),0.01, fix = "neither", 
+                             new_params = TRUE, 
+                             params = lhs1 %>% filter(V1 == as.numeric(dat2[i,])), 
+                             length = length, G_0 = G_0, tolerance = tolerance)
+  x[[i]] <- bind_cols(rep(as.character(dat2[i,]),5),x[[i]])
+}
+x_bound <- bind_rows(x) %>% rename(id = ...1) %>% mutate(model = "Modified N&G")
+
+run_2 <- left_join(run, x_bound, 
+                                   by = join_by(id, modi, state, model)) %>%
+  mutate(equi_value = ifelse(is.na(equi_value.x) == FALSE, equi_value.x, equi_value.y)) %>%
+  select(id, modi, state, equi_value, model)
+run_2
+}
+
+test_longer_mu_L <- function(run, length, average_method = "mean", tolerance){
+  app <- as.list(rep(NA, dim(run %>% filter(is.na(equi_pop) == TRUE) %>% 
+                               filter(state == "Adult") %>% 
+                               select(mu_L, etakappa))[1]))
+
+for(i in 1:dim(run %>% filter(is.na(equi_pop) == TRUE)
+               %>% filter(state == "Adult") 
+               %>% select(mu_L, etakappa))[1]){
+  
+  print(paste0("Progress: ", round((i-1)/dim(run %>% 
+               filter(is.na(equi_pop) == TRUE) %>% 
+               filter(state == "Adult") %>% 
+                 select(mu_L, etakappa))[1], digits = 3)*100, "%"))
+  
+  dat <- run %>% filter(is.na(equi_pop) == TRUE) %>% 
+    filter(state == "Adult") %>% 
+    select(mu_L, etakappa)
+  
+  app[[i]] <- test_three_variables_ddf_5(variable_1 = "mu_L", 
+                                                      min_1 = as.numeric(dat[i,1]), 
+                                                      max_1 = as.numeric(dat[i,1]), 
+                                                      by_1 = 0.004, 
+                                                      min_2 = as.numeric(dat[i,2]), 
+                                                      max_2 = as.numeric(dat[i,2]), 
+                                                      by_2 = 0.005, 
+                                                      average_method = average_method, 
+                                                      length = length,
+                                                      tolerance = tolerance)
+}
+app_bound <- bind_rows(app)
+
+run_2 <- left_join(run, app_bound, by = join_by(mu_L == modi_1, 
+                                          etakappa == modi_2, 
+                                          state == state)) %>% 
+  mutate(equi_check = ifelse(is.na(equi_pop.x) == FALSE, equi_check.x, equi_check.y)) %>%
+  mutate(equi_pop = ifelse(is.na(equi_pop.x) == FALSE, equi_pop.x, equi_pop.y)) %>%
+  select(mu_L, etakappa, equi_check, state, equi_pop)
+run_2
+}
+
+test_longer_mu_N <- function(run, length, average_method = "mean", tolerance){
+  app <- as.list(rep(NA, dim(run %>% filter(is.na(equi_pop) == TRUE) %>% 
+                               filter(state == "Adult") %>% 
+                               select(mu_N, etakappa))[1]))
+
+for(i in 1:dim(run %>% filter(is.na(equi_pop) == TRUE)
+               %>% filter(state == "Adult") 
+               %>% select(mu_N, etakappa))[1]){
+  
+  print(paste0("Progress: ", round((i-1)/dim(run %>% 
+               filter(is.na(equi_pop) == TRUE) %>% 
+               filter(state == "Adult") %>% 
+                 select(mu_N, etakappa))[1], digits = 3)*100, "%"))
+  
+  dat <- run %>% filter(is.na(equi_pop) == TRUE) %>% 
+    filter(state == "Adult") %>% 
+    select(mu_N, etakappa)
+  
+  app[[i]] <- test_three_variables_ddf_5(variable_1 = "mu_N", 
+                                                      min_1 = as.numeric(dat[i,1]), 
+                                                      max_1 = as.numeric(dat[i,1]), 
+                                                      by_1 = 0.004, 
+                                                      min_2 = as.numeric(dat[i,2]), 
+                                                      max_2 = as.numeric(dat[i,2]), 
+                                                      by_2 = 0.005, 
+                                                      average_method = average_method, 
+                                                      length = length,
+                                                      tolerance = tolerance)
+}
+app_bound <- bind_rows(app)
+
+run_2 <- left_join(run, app_bound, by = join_by(mu_N == modi_1, 
+                                          etakappa == modi_2, 
+                                          state == state)) %>% 
+  mutate(equi_check = ifelse(is.na(equi_pop.x) == FALSE, equi_check.x, equi_check.y)) %>%
+  mutate(equi_pop = ifelse(is.na(equi_pop.x) == FALSE, equi_pop.x, equi_pop.y)) %>%
+  select(mu_N, etakappa, equi_check, state, equi_pop)
+run_2
+}
+
+
+```
+
+```{r default model outputs (Figure 2), fig.height = 12, fig.width = 24}
+mod <- odin::odin({
+  deriv(F) <- G_0 - A_max * L * F / (K_F + F)
+  
+  N_lag_n <- delay(N, tau_L)
+  F_lag_n <- delay(F, tau_L)
+  tau_lag_n <- delay(tau_L, tau_P)
+  tau_lag_2n <- delay(tau_L, tau_L + tau_P)
+  N_lag <- if (t - tau_L <= 0)
+    N_0
+  else
+    N_lag_n
+  F_lag <- if (t - tau_L <= 0)
+    F_0
+  else
+    F_lag_n
+  tau_lag <-
+    if (t - tau_P <= 0)
+      (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  else
+    tau_lag_n
+  tau_lag_2 <-
+    if (t - tau_L - tau_P <= 0)
+      (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  else
+    tau_lag_2n
+  
+  
+  deriv(L) <-
+    (eta + kappa * exp(-lambda * (tau_lag - 5))) * N -  (eta + kappa * exp(-lambda *
+                                                                       (tau_lag_2 - 5))) * N_lag * exp(-mu_L * tau_L) * F * (K_F + F_lag) / (F_lag *
+                                                                                                                                         (K_F + F)) - mu_L * L
+  deriv(P) <-
+    (eta + kappa * exp(-lambda * (tau_lag_2 - 5))) * N_lag * exp(-mu_L * tau_L) *
+    F * (K_F + F_lag) / (F_lag * (K_F + F)) - P / tau_P - mu_P * P
+  
+  deriv(N) <- I_N + P / tau_P - mu_N * N
+  deriv(tau_L) <- 1 - F * (K_F + F_lag) / (F_lag * (K_F + F))
+  output(dev) <- tau_lag
+  
+  
+  I_N <- if (t <= 0)
+    0
+  else if (0 < t && t <= T_1)
+    J_1
+  else
+    0
+  
+  initial(F) <- F_0
+  initial(L) <- L_0
+  initial(P) <- P_0
+  initial(N) <- N_0
+  initial(tau_L) <- (mpovgamma * (K_F + F_0) / (A_max * F_0))
+  
+  G_0 <- user(200)
+  A_max <- user(0.3)
+  K_F <- user(10)
+  mu_L <- user(0.248)
+  mu_P <- user(0.395)
+  mu_N <- user(0.091)
+  tau_P <- user(1)
+  lambda <- user(0.42)
+  mpovgamma <- user(1.5)
+  kappa <- user(6.2) 
+  eta <- user(5.7)
+  
+  F_0 <- user(20)
+  T_1 <- user(0.001)
+  J_1 <- user(100000)
+  L_0 <- user(0)
+  P_0 <- user(0)
+  N_0 <- user(0)
+  
+})
+
+t <- seq(0, 730, length.out = 731)
+mod_1 <- mod$new()
+out <- mod_1$run(t)
+out_df_wide <-
+  as.data.frame(out) %>% mutate(wing_length = ((0.13 * dev - 0.35) / (0.0037 *
+                                                                        (dev - 5))) ^ (1 / 4.08),
+                                fecundity = 5.7 + 6.2 * exp(-0.42 * (dev-5)), 
+                                survival = exp(-0.248*tau_L))
+out_df_long <- out_df_wide %>%
+  rename(Larval = L,
+         Pupal = P,
+         Adult = N,
+         Food = F) %>%
+  pivot_longer(cols = !t,
+               values_to = "count",
+               names_to = "state")
+
+equi_tau_L <- find_tau_L(kappa = 6.2,
+           lambda = 0.42,
+           mu_L = 0.248,
+           eta = 5.7,
+           mu_N = 0.091,
+           mu_P = 0.395,
+           tau_P = 1
+           )$root
+equi_F <- 10/((0.3*equi_tau_L/1.5)- 1)
+equi_L <- 200*equi_tau_L/1.5
+equi_N <- 0.248*200*equi_tau_L/(1.5*(1 - exp(-0.248*equi_tau_L))*(5.7 + 6.2*exp(-0.42*(equi_tau_L-5))))
+equi_P <- equi_N*0.091*1
+equi_wing_length <- ((0.13 * equi_tau_L - 0.35) / (0.0037 *(equi_tau_L - 5))) ^ (1 / 4.08)
+
+
+gg1 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.9,
+    data = out_df_long %>%
+      filter(state == "Larval")
+  ) + geom_hline(yintercept = equi_L, linetype = "dashed") +
+  theme_bw() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(expression(paste(
+    bold("Larval "),
+    bolditalic("Anopheles"),
+    bold(" population")
+  ))) +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        plot.title = element_text(size = 22.5, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Time since model initialised (Days)",
+       y = "Number",
+       colour = 'Stage in Life-Cycle')
+
+gg2 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.9,
+    data = out_df_long %>%
+      filter(state == "Pupal")
+  ) + geom_hline(yintercept = equi_P, linetype = "dashed") +
+  theme_bw() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(expression(paste(
+    bold("Pupal "),
+    bolditalic("Anopheles"),
+    bold(" population")
+  ))) +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        plot.title = element_text(size = 22.5, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Time since model initialised (Days)",
+       y = "Number",
+       colour = 'Stage in Life-Cycle')
+
+gg3 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.9,
+    data = out_df_long %>%
+      filter(state == "Adult") 
+  ) + geom_hline(yintercept = equi_N, linetype = "dashed") +
+  theme_bw() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(expression(paste(
+    bold("Adult "),
+    bolditalic("Anopheles"),
+    bold(" population")
+  ))) +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        plot.title = element_text(size = 22.5, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Time since model initialised (Days)",
+       y = "Number",
+       colour = 'Stage in Life-Cycle')
+
+gg4 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.9,
+    data = out_df_long %>%
+      filter(state == "Food")
+  ) + geom_hline(yintercept = equi_F, linetype = "dashed") +
+  theme_bw() + 
+  #ylim(0,150) + 
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(expression(paste(bold("Food density")))) +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        plot.title = element_text(size = 22.5, face = "bold"),
+        legend.position = "none")+
+  labs(x = "Time since model initialised (Days)",
+       y = "Food in habitat (mg)",
+       colour = 'Stage in Life-Cycle')
+
+gg5 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.9,
+    data = out_df_long %>%
+      filter(state == "tau_L")
+  ) + geom_hline(yintercept = equi_tau_L, linetype = "dashed") +
+  theme_bw() + 
+  ylim(7.5,17.5) + 
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(expression(paste(bold("Larval to Pupal Development \n Time ")))) +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        plot.title = element_text(size = 22.5, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Time since model initialised (Days)",
+       y = "Time (Days)",
+       colour = 'Stage in Life-Cycle')
+
+gg6 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.9,
+    data = out_df_long %>%
+      filter(state == "wing_length")
+  ) + geom_hline(yintercept = equi_wing_length, linetype = "dashed") +
+  ylim(2.5,2.9) + 
+  theme_bw() +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(expression(paste(bold("Adult Female Wing Length")))) +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        plot.title = element_text(size = 22.5, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Time since model initialised (Days)",
+       y = "Length (mm)",
+       colour = 'Stage in Life-Cycle')
+
+gg7 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.9,
+    data = out_df_long %>%
+      filter(state == "fecundity")
+  ) + geom_hline(yintercept = 5.7 + 6.2*exp(-0.42*(equi_tau_L-5)), linetype = "dashed") +
+  theme_bw() +
+  ylim(5,9) +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(expression(paste(bold("Average Adult Fecundity")))) +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        plot.title = element_text(size = 22.5, face = "bold"),
+        legend.position = "none") + 
+  labs(x = "Time since model initialised (Days)",
+       y = "Eggs hacthed per adult mosquito per day",
+       colour = 'Stage in Life-Cycle')
+
+gg8 <- ggplot() +
+  geom_line(
+    aes(x = t, y = count, colour = state),
+    linewidth = 0.9,
+    data = out_df_long %>%
+      filter(state == "survival")
+  ) + geom_hline(yintercept = exp(-0.248*equi_tau_L), linetype = "dashed") +
+  theme_bw() +
+  ylim(0,0.2) +
+  scale_colour_met_d(name = "Hiroshige") +
+  ggtitle(expression(paste(bold("Larval to Pupal Survival")))) +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        plot.title = element_text(size = 22.5, face = "bold"),
+        legend.position = "none") + 
+  labs(x = "Time since model initialised (Days)",
+       y = "Probability of Survival",
+       colour = 'Stage in Life-Cycle')
+
+(gg1 + gg2 + gg3 + gg4 + plot_layout(ncol = 4))/(gg5 + gg6 + gg7 + gg8 + plot_layout(ncol = 4)) + 
+  plot_annotation(tag_levels = "A") & theme(plot.tag = element_text(size = 30, face = "bold"))
+
+```
+
+```{r code for contours, include = FALSE}
+
+out_test_eta_kappa_and_lambda_ddf_5 <- test_three_variables_ddf_5("lambda", 0, 0.84, 0.01, 0, 2, 0.005,
+    average_method = "mean")
+
+out_test_eta_kappa_and_lambda_ddf_5_1 <- out_test_eta_kappa_and_lambda_ddf_5 %>% rename(etakappa = modi_2, lambda = modi_1)
+
+out_test_eta_kappa_and_muL_ddf_5 <- test_three_variables_ddf_5("mu_L", 0.004, 0.496, 0.004, 0, 2, 0.005,
+    average_method = "mean")
+
+out_test_eta_kappa_and_muL_ddf_5_1 <- out_test_eta_kappa_and_muL_ddf_5 %>% rename(etakappa = modi_2, mu_L = modi_1)
+
+out_test_eta_kappa_and_lambda_ddf_5_1 %>% filter(state == "Adult") %>% filter(is.na(equi_pop) == TRUE)
+
+out_test_eta_kappa_and_muL_ddf_5_1 %>% filter(state == "Adult") %>% filter(is.na(equi_pop) == TRUE)
+out_test_eta_kappa_and_muL_ddf_5_2 <- test_longer_mu_L(out_test_eta_kappa_and_muL_ddf_5_1, 
+                                                           182500, tolerance = 0.01)
+out_test_eta_kappa_and_muL_ddf_5_2 %>% filter(state == "Adult") %>% filter(is.na(equi_pop) == TRUE)
+out_test_eta_kappa_and_muL_ddf_5_3 <- test_longer_mu_L(out_test_eta_kappa_and_muL_ddf_5_2, 
+                                                           1825000, tolerance = 0.02)
+
+```
+
+```{r plotting contours lambda & eta+kappa (Figure 3), fig.height = 10, fig.width = 12}
+
+i1 <- ggplot(aes(x = etakappa*11.9, y = lambda), data = out_test_eta_kappa_and_lambda_ddf_53_new_new_1 %>% filter(state == "Adult")) + geom_contour_filled(aes(z = equi_pop), bins = 10)+ 
+  geom_contour(aes(z = equi_check), colour = "white") +
+  scale_fill_met_d(name = "Hiroshige", direction = -1) +
+  #ggtitle(paste("Equilibrium Adult Population when varying kappa and mu_N")) +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 14),
+        legend.text = element_text(size = 14),
+        plot.title = element_text(size = 22.5, face = "bold")) +
+  labs(x = expression(paste(eta, " + ", kappa)),
+       y = expression(lambda),
+       fill = "Adult Population") +
+  annotate("text", x = 0.18, y = 0.45, 
+            label = "Extinction" , color="white", 
+            size= 4, fontface="bold", angle = 90) +
+  annotate("text", x = 20, y = 0.075, 
+            label = "Oscillations" , color="white", 
+            size=6 , fontface="bold") +
+  annotate("text", x = 13, y = 0.4, 
+            label = "Stable Equilibrium" , color="white", 
+            size=6 , fontface="bold") + 
+  geom_point(aes(x = 0.2, y = 0.7), shape = 49, colour = "white", size = 6) + 
+  geom_point(aes(x = 1, y = 0.2), shape = 50, colour = "black", size = 6) + 
+  geom_point(aes(x = 10, y = 0.5), shape = 51, colour = "white", size = 6) + 
+  geom_point(aes(x = 16.5, y = 0.05), shape = 52, colour = "white", size = 6)
+
+i2 <- plot_for_contours(k = 6.2*0.2/11.9, l = 0.7, e = 5.7*0.2/11.9, length = 1095) 
+i3 <- plot_for_contours(k = 6.2*1/11.9, l = 0.2, e = 5.7*1/11.9, length = 1095) 
+i4 <- plot_for_contours(k = 6.2*10/11.9, l = 0.5, e = 5.7*10/11.9, length = 1095) 
+i5 <- plot_for_contours(k = 6.2*16.5/11.9, l = 0.05, e = 5.7*16.5/11.9, length = 1095) 
+
+(i1 + plot_layout(tag_level = 'new'))/((i2 +
+  ggtitle(expression(paste(
+    bold("Adult "), bolditalic("Anopheles"), bold(" population")
+  )))) + i3 + i4 + i5 + plot_layout(ncol = 4)) + plot_layout(heights = c(4,1)) + 
+  plot_annotation(tag_levels = "1") & theme(plot.tag = element_text(size = 15, face = "bold"))
+
+
+```
+
+```{r plotting contours mu_L & eta+kappa (Figure 4), fig.height = 10, fig.width = 12}
+
+i6 <- ggplot(aes(x = etakappa*11.9, y = mu_L), data = out_test_eta_kappa_and_muL_ddf_53_new_new_3 %>% filter(state == "Adult")) + geom_contour_filled(aes(z = equi_pop), bins = 10)+ 
+  geom_contour(aes(z = equi_check), colour = "white") +
+  scale_fill_met_d(name = "Hiroshige", direction = -1) +
+  #ggtitle(paste("Equilibrium Adult Population when varying kappa and mu_N")) +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 14),
+        legend.text = element_text(size = 14),
+        plot.title = element_text(size = 22.5, face = "bold")) +
+  labs(x = expression(paste(eta, " + ", kappa)),
+       y = expression(mu["L"]),
+       fill = "Adult Population") +
+  annotate("text", x = 0.45, y = 0.445, 
+            label = "Extinction" , color="white", 
+            size=5.5 , fontface="bold", angle = 90) +
+  annotate("text", x = 14, y = 0.075, 
+            label = "Oscillations" , color="white", 
+            size=6 , fontface="bold") +
+  annotate("text", x = 11, y = 0.3, 
+            label = "Stable Equilibrium" , color="white", 
+            size=6 , fontface="bold") + 
+  geom_point(aes(x = 0.4, y = 0.375), shape = 53, colour = "white", size = 6) + 
+  geom_point(aes(x = 0.75, y = 0.05), shape = 54, colour = "black", size = 6) + 
+  geom_point(aes(x = 11, y = 0.2), shape = 55, colour = "white", size = 6) + 
+  geom_point(aes(x = 18, y = 0.05), shape = 56, colour = "white", size = 6)
+
+
+i7 <- plot_for_contours(k = 6.2*0.4/11.9, ml = 0.375, e = 5.7*0.4/11.9, length = 1095) 
+i8 <- plot_for_contours(k = 6.2*0.75/11.9, ml = 0.05, e = 5.7*0.75/11.9, length = 1095) 
+i9 <- plot_for_contours(k = 6.2*11/11.9, ml = 0.2, e = 5.7*11/11.9, length = 1095) 
+i10 <- plot_for_contours(k = 6.2*18/11.9, ml = 0.05, e = 5.7*18/11.9, length = 365*8) 
+
+
+(i6 + plot_layout(tag_level = 'new'))/((i7 +
+  ggtitle(expression(paste(
+    bold("Adult "), bolditalic("Anopheles"), bold(" population")
+  )))) + i8 + i9 + i10 + plot_layout(ncol = 4)) + plot_layout(heights = c(4,1)) + 
+  plot_annotation(tag_levels = list(c("5", "6", "7", "8"))) & theme(plot.tag = element_text(size = 15, face = "bold"))
+
+```
+
+```{r varying mu_L plotting dev time & fecndity (Figure 5), fig.height = 5, fig.width = 12}
+
+out_test_mu_l_ddf_5_normrange <-
+  as.data.frame(test_variable_ddf_5(
+    "mu_L",
+    min = 0.004,
+    max = 0.496,
+    by = 0.004,
+    average_method = "mean",
+    length = 182500,
+    tolerance = 0.01
+  ))
+
+
+
+plot_dd_outputs_ddf_5(out_test_mu_l_ddf_5_normrange %>% filter(modi >= 0.1), "mu_L", 
+                      n_min = 0, n_max = 500, t_min = 0, t_max = 40,
+                      f_min = 5, f_max = 7.5, s_min = 0.01, s_max = 0.03)
+
+
+```
+
+```{r LHS 3 model comparison equi adults & larvae (Figure 6), fig.height = 14, fig.width = 24}
+
+for_plot_adults <- bind_rows(list(equi3_vary_kappa(0,1,0.005, fix = "adults"),
+                                  equi3_vary_q0(0,1,0.005, fix = "adults"), 
+                                  equi3_vary_beta(0,1,0.005)), 
+                             .id = "id") %>% 
+  mutate(model = ifelse(id == 1, "Modified N&G", ifelse(id == 2, "H&G", "White")))
+
+cc_gen <- equilibria3_complex_dde(equal_larvae = FALSE, fixed_adults = TRUE)
+
+set.seed(57)
+
+lhs1 <- lhs()
+
+model_runs <- as.list(rep(NA, 100))
+for(j in 1:100){
+  print(paste0("Progress: ", j-1, "%"))
+  model_runs[[j]] <-  bind_rows(list(equi3_vary_kappa(0,1,0.005, fix = "neither", 
+                                                      new_params = TRUE, 
+                                                      params = lhs1 %>% filter(V1 == j),
+                                                      G_0 = as.numeric(cc_gen$G0),
+                                                      length = 18250),
+                                     equi3_vary_q0(0,1,0.005, fix = "neither", 
+                                                   new_params = TRUE, 
+                                                   params = lhs1 %>% filter(V1 == j),
+                                                   g_hg = as.numeric(cc_gen$gamma)), 
+                                     equi3_vary_beta(0,1,0.005, 
+                                                     new_params = TRUE, 
+                                                     params = lhs1 %>% filter(V1 == j))), 
+                                .id = "id") %>% 
+    mutate(model = ifelse(id == 1, "Modified N&G", ifelse(id == 2, "H&G", "White")))
+}
+
+
+model_runs_for_plot <- bind_rows(model_runs, .id = "id")
+
+model_runs_for_plot %>% filter(is.na(equi_value) == TRUE) %>% filter(state != "Survival_2")
+
+model_runs_for_plot_2 <- test_longer_3plots(model_runs_for_plot,length = 182500, G_0 = as.numeric(cc_gen$G0), tolerance = 0.01)
+model_runs_for_plot_2 %>% filter(is.na(equi_value) == TRUE) %>% filter(state != "Survival_2")
+model_runs_for_plot_3 <- test_longer_3plots(model_runs_for_plot_2,length = 1825000, 
+                                            G_0 =  as.numeric(cc_gen$G0), tolerance = 0.02)
+model_runs_for_plot_3 %>% filter(is.na(equi_value) == TRUE) %>% filter(state != "Survival_2")
+
+
+for_plot_adults$model <- factor(for_plot_adults$model, levels = c("Modified N&G", "H&G", "White"))
+model_runs_for_plot_3$model <- factor(model_runs_for_plot_3$model, levels = c("Modified N&G", "H&G", "White"))
+
+model_runs_for_plot_agg <- do.call(data.frame,aggregate(model_runs_for_plot_3, equi_value ~ modi + model + state, 
+                                                        FUN = function(x){c(
+                                                          median = median(x),
+                                                          lowq = unname(quantile(x, probs = 0.00)),
+                                                          highq = unname(quantile(x, probs = 1.00)),
+                                                          mean = mean(x),
+                                                          lowci = mean(x) - 1.96*sd(x),
+                                                          highci = mean(x) + 1.96*sd(x))
+                                                        }))
+
+ee1 <- ggplot() +
+  geom_point(
+    aes(x = 1 - modi, y = equi_value, colour = model),
+    size = 1, data = for_plot_adults %>%
+                filter(state == "Adult") %>% filter(model == "Modified N&G")) +
+  geom_ribbon(aes(ymin = equi_value.lowq, ymax = equi_value.highq, x = 1 - modi, fill = model), 
+              alpha = 0.2, data = model_runs_for_plot_agg %>%
+         filter(state == "Adult") %>% filter(model == "Modified N&G")) +
+  #facet_wrap(~model, scales = "free", labeller = as_labeller(c("H&G" = "Hancock & Godfray", "Modified N&G" = #"Modified Nisbet & Gurney", "White" = "White et al."))) +
+  theme_bw() +
+  scale_colour_manual(values = c("#e76254", "#f7aa58", "#72bcd5"), 
+                      labels = c("Modified Nisbet \n & Gurney", "Hancock & Godfray", "White et al.")) +
+  scale_fill_manual(values = c("#e76254", "#f7aa58", "#72bcd5"), 
+                      labels = c("Modified Nisbet \n & Gurney", "Hancock & Godfray", "White et al.")) +
+  ggtitle("Modified Nisbet & Gurney") +
+  ylim(0, 31000) +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        legend.text = element_text(size = 18),
+        strip.text = element_text(size = 18),
+        plot.title = element_text(size = 22.5, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Proportion of Population Homozygous for \n Modified Gene",
+       y = "Number",
+       colour = 'Model')
+
+ee2 <- ggplot() +
+  geom_point(
+    aes(x = 1 - modi, y = equi_value, colour = model),
+    size = 1, data = for_plot_adults %>%
+                filter(state == "Adult") %>% filter(model == "H&G")) +
+  geom_ribbon(aes(ymin = equi_value.lowq, ymax = equi_value.highq, x = 1 - modi, fill = model), 
+              alpha = 0.2, data = model_runs_for_plot_agg %>%
+         filter(state == "Adult") %>% filter(model == "H&G")) +
+  #facet_wrap(~model, scales = "free", labeller = as_labeller(c("H&G" = "Hancock & Godfray", "Modified N&G" = #"Modified Nisbet & Gurney", "White" = "White et al."))) +
+  theme_bw() +
+  scale_colour_manual(values = c("#f7aa58"), 
+                      labels = c("Hancock & Godfray")) +
+  scale_fill_manual(values = c("#f7aa58"), 
+                      labels = c("Hancock & Godfray")) +
+  ylim(0, 31000) +
+  ggtitle("Hancock & Godfray") +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        legend.text = element_text(size = 18),
+        strip.text = element_text(size = 18),
+        plot.title = element_text(size = 22.5, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Proportion of Population Homozygous for \n Modified Gene",
+       y = "Number",
+       colour = 'Model')
+
+ee3 <- ggplot() +
+  geom_point(
+    aes(x = 1 - modi, y = equi_value, colour = model),
+    size = 1, data = for_plot_adults %>%
+                filter(state == "Adult") %>% filter(model == "White")) +
+  geom_ribbon(aes(ymin = equi_value.lowq, ymax = equi_value.highq, x = 1 - modi, fill = model), 
+              alpha = 0.2, data = model_runs_for_plot_agg %>%
+         filter(state == "Adult") %>% filter(model == "White")) +
+  #facet_wrap(~model, scales = "free", labeller = as_labeller(c("H&G" = "Hancock & Godfray", "Modified N&G" = #"Modified Nisbet & Gurney", "White" = "White et al."))) +
+  theme_bw() +
+  scale_colour_manual(values = c("#72bcd5"), 
+                      labels = c("White et al.")) +
+  scale_fill_manual(values = c("#72bcd5"), 
+                      labels = c("White et al.")) +
+  ggtitle("White et al.") +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20, colour = "#376795", face = "bold"),
+        legend.title = element_text(size = 20),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18, colour = "#376795", face = "bold"),
+        legend.text = element_text(size = 18),
+        strip.text = element_text(size = 18),
+        plot.title = element_text(size = 22.5, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Proportion of Population Homozygous for \n Modified Gene",
+       y = "Number",
+       colour = 'Model')
+
+ee4 <- ggplot() +
+  geom_point(
+    aes(x = 1 - modi, y = equi_value, colour = model),
+    size = 1, data = for_plot_adults %>%
+                filter(state == "Larval") %>% filter(model == "Modified N&G")) +
+  geom_ribbon(aes(ymin = equi_value.lowq, ymax = equi_value.highq, x = 1 - modi, fill = model), 
+              alpha = 0.2, data = model_runs_for_plot_agg %>%
+         filter(state == "Larval") %>% filter(model == "Modified N&G")) +
+  #facet_wrap(~model, scales = "free", labeller = as_labeller(c("H&G" = "Hancock & Godfray", "Modified N&G" = #"Modified Nisbet & Gurney", "White" = "White et al."))) +
+  theme_bw() +
+  scale_colour_manual(values = c("#e76254", "#f7aa58", "#72bcd5"), 
+                      labels = c("Modified Nisbet \n & Gurney", "Hancock & Godfray", "White et al.")) +
+  scale_fill_manual(values = c("#e76254", "#f7aa58", "#72bcd5"), 
+                      labels = c("Modified Nisbet \n & Gurney", "Hancock & Godfray", "White et al.")) +
+  ggtitle("Modified Nisbet & Gurney") +
+  ylim(0, 91000) +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        legend.text = element_text(size = 18),
+        strip.text = element_text(size = 18),
+        plot.title = element_text(size = 22.5, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Proportion of Population Homozygous for \n Modified Gene",
+       y = "Number",
+       colour = 'Model')
+
+ee5 <- ggplot() +
+  geom_point(
+    aes(x = 1 - modi, y = equi_value, colour = model),
+    size = 1, data = for_plot_adults %>%
+                filter(state == "Larval") %>% filter(model == "H&G")) +
+  geom_ribbon(aes(ymin = equi_value.lowq, ymax = equi_value.highq, x = 1 - modi, fill = model), 
+              alpha = 0.2, data = model_runs_for_plot_agg %>%
+         filter(state == "Larval") %>% filter(model == "H&G")) +
+  #facet_wrap(~model, scales = "free", labeller = as_labeller(c("H&G" = "Hancock & Godfray", "Modified N&G" = #"Modified Nisbet & Gurney", "White" = "White et al."))) +
+  theme_bw() +
+  ylim(0, 91000) +
+  scale_colour_manual(values = c("#f7aa58"), 
+                      labels = c("Hancock & Godfray")) +
+  scale_fill_manual(values = c("#f7aa58"), 
+                      labels = c("Hancock & Godfray")) +
+  ggtitle("Hancock & Godfray") +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        legend.text = element_text(size = 18),
+        strip.text = element_text(size = 18),
+        plot.title = element_text(size = 22.5, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Proportion of Population Homozygous for \n Modified Gene",
+       y = "Number",
+       colour = 'Model')
+
+ee6 <- ggplot() +
+  geom_point(
+    aes(x = 1 - modi, y = equi_value, colour = model),
+    size = 1, data = for_plot_adults %>%
+                filter(state == "Larval") %>% filter(model == "White")) +
+  geom_ribbon(aes(ymin = equi_value.lowq, ymax = equi_value.highq, x = 1 - modi, fill = model), 
+              alpha = 0.2, data = model_runs_for_plot_agg %>%
+         filter(state == "Larval") %>% filter(model == "White")) +
+  #facet_wrap(~model, scales = "free", labeller = as_labeller(c("H&G" = "Hancock & Godfray", "Modified N&G" = #"Modified Nisbet & Gurney", "White" = "White et al."))) +
+  theme_bw() +
+  scale_colour_manual(values = c("#72bcd5"), 
+                      labels = c("White et al.")) +
+  scale_fill_manual(values = c("#72bcd5"), 
+                      labels = c("White et al.")) +
+  ylim(0, 91000) +
+  ggtitle("White et al.") +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        legend.text = element_text(size = 18),
+        strip.text = element_text(size = 18),
+        plot.title = element_text(size = 22.5, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Proportion of Population Homozygous for \n Modified Gene",
+       y = "Number",
+       colour = 'Model')
+      
+wrap_elements(ee1 + ee2 + ee3 + plot_annotation(subtitle = "Average Long-term Adult population", tag_levels = list(c("A", "B", "C"))) & theme(plot.subtitle = element_text(size = 30), plot.tag = element_text(size = 22.5, face = "bold")))/wrap_elements(ee4 + ee5 + ee6 + plot_annotation(subtitle = "Average Long-term Larval population", tag_levels = list(c("D", "E", "F"))) & theme(plot.subtitle = element_text(size = 30), plot.tag = element_text(size = 22.5, face = "bold")))
+ 
+```
+
+```{r gene drive malaria transmission model comparison (Figure 7), fig.height = 7.5, fig.width = 15}
+
+for_plot_adults_mal <- pivot_wider(for_plot_adults, names_from = state, values_from = equi_value) %>% group_by(model) %>% mutate(prop_adult = Adult/Adult[modi == 1]) 
+
+eta_kappa_test_smallrange <- test_variable_ddf_5(variable = "eta_kappa", 
+                                           min = 0, 
+                                           max = 2, 
+                                           by = 0.005, 
+                                           average_method = "mean", 
+                                           length = 182500,
+                                           tolerance = 0.01)
+
+eta_kappa_test_smallrange_wide <- eta_kappa_test_smallrange %>% pivot_wider(names_from = state, values_from = equi_pop)
+
+eta_kappa_test_smallrange_wide_2 <- eta_kappa_test_smallrange_wide %>% mutate(wing_length = ifelse(lar_dev_time >= 5.7, wing_length, (((5.7*0.13 - 0.35)/(5.7-5))/0.0037)^(1/4.08)))
+
+eta_kappa_test_smallrange_2 <- eta_kappa_test_smallrange_wide_2 %>% pivot_longer(c(Larval, Pupal, Adult, Food, lar_dev_time, wing_length, fecundity, survival), names_to = "state", values_to = "equi_pop")
+
+
+jj6 <- ggplot(data = for_plot_adults_mal) +
+  geom_point(
+    aes(x = 1-modi, y = prop_adult*seq(0,1,0.005), colour = model)) + 
+  theme_bw() +
+  scale_colour_manual(values = c("#e76254", "#f7aa58","#72bcd5"), 
+                      labels = c("Modified Nisbet \n & Gurney", "Hancock & Godfray", "White et al.")) +
+  ggtitle(expression(paste(bold("Long-term Proportion of Adult Female "), bolditalic("Anopheles"), bold(" able to spread Malaria")))) +
+  theme(axis.title.x = element_text(size = 15),
+        axis.title.y = element_text(size = 15),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+       legend.title = element_text(size = 17),
+       legend.text = element_text(size = 15),
+        plot.title = element_text(size = 13, face = "bold"),
+       legend.position = "bottom") + 
+  labs(x = "Proportion of Population Homozygous for Modified Gene",
+       y = "Proportion of Original Population able to Spread Malaria",
+       colour = 'Model')
+
+jj7 <- plot_outputs_kappa_eta_ddf_5(eta_kappa_test_smallrange_2 %>% filter(modi <= 11.9), t_min = 4, t_max = 16)
+       
+jj6 + jj7 + 
+  plot_annotation(tag_levels = "A") & theme(plot.tag = element_text(size = 20, face = "bold"))
+
+```
+
+```{r plot results of varying G_0 and K_F (Figure A1), fig.height = 12, fig.width = 18}
+out_test_food_input_ddf_5 <-
+  as.data.frame(test_variable_ddf_5(
+    "G_0",
+    min = 1,
+    max = 1000,
+    by = 10,
+    average_method = "mean",
+    length = 182500
+  ))
+
+
+out_test_k_ddf_5 <-
+  as.data.frame(test_variable_ddf_5(
+    "K_F",
+    min = 1,
+    max = 100,
+    by = 1,
+    average_method = "mean",
+    length = 182500
+  ))
+
+
+plot_outputs_ddf_G0_KF(output1 = out_test_food_input_ddf_5, 
+                            output2 = out_test_k_ddf_5)
+```
+
+```{r plot of individual LHS runs equi adults & larvae (Figure A2), fig.height = 14, fig.width = 24}
+ee7 <- ggplot(data = model_runs_for_plot_3 %>%
+         filter(state == "Adult") %>% filter(model == "Modified N&G")) +
+  geom_point(
+    aes(x = 1-modi, y = equi_value, colour = model, group = id),
+    size = 0.4) + 
+  #facet_wrap(~model, scales = "free", labeller = as_labeller(c("H&G" = "Hancock & Godfray", "Modified N&G" = #"Modified Nisbet & Gurney", "White" = "White et al."))) +
+  theme_bw() +
+  scale_colour_manual(values = c("#e76254", "#f7aa58", "#72bcd5"), 
+                      labels = c("Modified Nisbet \n & Gurney", "Hancock & Godfray", "White et al.")) +
+  scale_fill_manual(values = c("#e76254", "#f7aa58", "#72bcd5"), 
+                      labels = c("Modified Nisbet \n & Gurney", "Hancock & Godfray", "White et al.")) +
+  ggtitle("Modified Nisbet & Gurney") +
+  ylim(0, 31000) +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        legend.text = element_text(size = 18),
+        strip.text = element_text(size = 18),
+        plot.title = element_text(size = 22.5, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Proportion of Population Homozygous for \n Modified Gene",
+       y = "Number",
+       colour = 'Model')
+
+ee8 <- ggplot(data = model_runs_for_plot_3 %>%
+         filter(state == "Adult") %>% filter(model == "H&G")) +
+  geom_point(
+    aes(x = 1-modi, y = equi_value, colour = model, group = id),
+    size = 0.4) + 
+  #facet_wrap(~model, scales = "free", labeller = as_labeller(c("H&G" = "Hancock & Godfray", "Modified N&G" = #"Modified Nisbet & Gurney", "White" = "White et al."))) +
+  theme_bw() +
+  scale_colour_manual(values = c("#f7aa58"), 
+                      labels = c("Hancock & Godfray")) +
+  ggtitle("Hancock & Godfray") +
+  ylim(0, 31000) +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        legend.text = element_text(size = 18),
+        strip.text = element_text(size = 18),
+        plot.title = element_text(size = 22.5, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Proportion of Population Homozygous for \n Modified Gene",
+       y = "Number",
+       colour = 'Model')
+
+ee9 <- ggplot(data = model_runs_for_plot_3 %>%
+         filter(state == "Adult") %>% filter(model == "White")) +
+  geom_point(
+    aes(x = 1-modi, y = equi_value, colour = model, group = id),
+    size = 0.4) + 
+  #facet_wrap(~model, scales = "free", labeller = as_labeller(c("H&G" = "Hancock & Godfray", "Modified N&G" = #"Modified Nisbet & Gurney", "White" = "White et al."))) +
+  theme_bw() +
+  scale_colour_manual(values = c("#72bcd5"), 
+                      labels = c("Modified Nisbet \n & Gurney", "Hancock & Godfray", "White et al.")) +
+  ggtitle("White et al.") +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20, colour = "#376795", face = "bold"),
+        legend.title = element_text(size = 20),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18, colour = "#376795", face = "bold"),
+        legend.text = element_text(size = 18),
+        strip.text = element_text(size = 18),
+        plot.title = element_text(size = 22.5, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Proportion of Population Homozygous for \n Modified Gene",
+       y = "Number",
+       colour = 'Model')
+
+ee7 + ee8 + ee9 + plot_annotation(subtitle = "Average Long-term Adult population", tag_levels = list(c("A", "B", "C"))) & theme(plot.subtitle = element_text(size = 30), plot.tag = element_text(size = 22.5, face = "bold"))
+
+ee10 <- ggplot(data = model_runs_for_plot_3 %>%
+         filter(state == "Larval") %>% filter(model == "Modified N&G")) +
+  geom_point(
+    aes(x = 1-modi, y = equi_value, colour = model, group = id),
+    size = 0.4) + 
+  #facet_wrap(~model, scales = "free", labeller = as_labeller(c("H&G" = "Hancock & Godfray", "Modified N&G" = #"Modified Nisbet & Gurney", "White" = "White et al."))) +
+  theme_bw() +
+  scale_colour_manual(values = c("#e76254", "#f7aa58", "#72bcd5"), 
+                      labels = c("Modified Nisbet \n & Gurney", "Hancock & Godfray", "White et al.")) +
+  scale_fill_manual(values = c("#e76254", "#f7aa58", "#72bcd5"), 
+                      labels = c("Modified Nisbet \n & Gurney", "Hancock & Godfray", "White et al.")) +
+  ylim(0, 91000) +
+  ggtitle("Modified Nisbet & Gurney") +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        legend.text = element_text(size = 18),
+        strip.text = element_text(size = 18),
+        plot.title = element_text(size = 22.5, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Proportion of Population Homozygous for \n Modified Gene",
+       y = "Number",
+       colour = 'Model')
+
+ee11 <- ggplot(data = model_runs_for_plot_3 %>%
+         filter(state == "Larval") %>% filter(model == "H&G")) +
+  geom_point(
+    aes(x = 1-modi, y = equi_value, colour = model, group = id),
+    size = 0.4) + 
+  #facet_wrap(~model, scales = "free", labeller = as_labeller(c("H&G" = "Hancock & Godfray", "Modified N&G" = #"Modified Nisbet & Gurney", "White" = "White et al."))) +
+  theme_bw() +
+  scale_colour_manual(values = c("#f7aa58"), 
+                      labels = c("Hancock & Godfray")) +
+  ggtitle("Hancock & Godfray") +
+  ylim(0, 91000) +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        legend.text = element_text(size = 18),
+        strip.text = element_text(size = 18),
+        plot.title = element_text(size = 22.5, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Proportion of Population Homozygous for \n Modified Gene",
+       y = "Number",
+       colour = 'Model')
+
+ee12 <- ggplot(data = model_runs_for_plot_3 %>%
+         filter(state == "Larval") %>% filter(model == "White")) +
+  geom_point(
+    aes(x = 1-modi, y = equi_value, colour = model, group = id),
+    size = 0.4) + 
+  #facet_wrap(~model, scales = "free", labeller = as_labeller(c("H&G" = "Hancock & Godfray", "Modified N&G" = #"Modified Nisbet & Gurney", "White" = "White et al."))) +
+  theme_bw() +
+  scale_colour_manual(values = c("#72bcd5"), 
+                      labels = c("Modified Nisbet \n & Gurney", "Hancock & Godfray", "White et al.")) +
+  ggtitle("White et al.") +
+  ylim(0, 91000) +
+  theme(axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        axis.text.x = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        legend.text = element_text(size = 18),
+        strip.text = element_text(size = 18),
+        plot.title = element_text(size = 22.5, face = "bold"),
+        legend.position = "none") +
+  labs(x = "Proportion of Population Homozygous for \n Modified Gene",
+       y = "Number",
+       colour = 'Model')
+
+wrap_elements(ee7 + ee8 + ee9 + plot_annotation(subtitle = "Average Long-term Adult population", tag_levels = list(c("A", "B", "C"))) & theme(plot.subtitle = element_text(size = 30), plot.tag = element_text(size = 22.5, face = "bold")))/wrap_elements(ee10 + ee11 + ee12 + plot_annotation(subtitle = "Average Long-term Larval population", tag_levels = list(c("D", "E", "F"))) & theme(plot.subtitle = element_text(size = 30), plot.tag = element_text(size = 22.5, face = "bold")))
+```
