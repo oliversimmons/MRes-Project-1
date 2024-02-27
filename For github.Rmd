@@ -2088,9 +2088,9 @@ equilibria3_complex_dde<-function(muL = 0.248, muP_White = 0.25, muP_HG = 0.05,
   #muN=0.1 #adult daily mortality
   mu0=0.05 #egg daily mortality
   #muP=0.1 #pupae daily mortality
-  TL=10 #fixed larval development time
+  TL=14 #fixed larval development time
   #TP=2 #fixed pupal development time
-  T0=2 #fixed egg development time
+  T0=1 #fixed egg development time
   muL_HG <- 0.1
   q0 <- q0
   
@@ -2198,7 +2198,7 @@ equilibria3_HG<-function(muP_White = 0.25, muP_HG = 0.05, mu0 = 0.05,
                          muN_White = 0.096, TP_White = 0.64, TP_HG = 1, muN_HG = 0.1,
                          beta = 21.19, q0 = 30, K_W = 1000, g_hg = 0.001, 
                          de = 6.64, dl = 3.72, mue0 = 0.034, mul0 = 0.035, 
-                         gw = 13.25, tl = 10, t0 = 2, mulhg = 0.1, 
+                         gw = 13.25, tl = 14, t0 = 1, mulhg = 0.1, 
                          equal_larvae = TRUE, fixed_larvae = FALSE, 
                          fixed_adults = FALSE){
   
@@ -2721,8 +2721,8 @@ lhs <- function(){
   muE0_range <- seq(0.5*0.034, 1.5*0.034, length.out = 101)
   muL0_range <- seq(0.5*0.035, 1.5*0.035, length.out = 101)
   gamma_w_range <- seq(0.5*13.25, 1.5*13.25, length.out = 101)
-  TL_range <- seq(0.5*10, 1.5*10, length.out = 101)
-  T0_range <- seq(0.5*2, 1.5*2, length.out = 101)
+  TL_range <- seq(0.5*14, 1.5*14, length.out = 101)
+  T0_range <- seq(0.5*1, 1.5*1, length.out = 101)
   muL_HG_range <- seq(0.5*0.1, 1.5*0.1, length.out = 101)
 
   
@@ -3439,7 +3439,7 @@ ee1 <- ggplot() +
   scale_fill_manual(values = c("#e76254", "#f7aa58", "#72bcd5"), 
                       labels = c("Modified Nisbet \n & Gurney", "Hancock & Godfray", "White et al.")) +
   ggtitle("Modified Nisbet & Gurney") +
-  ylim(0, 31000) +
+  ylim(0, 35000) +
   theme(axis.title.x = element_text(size = 20),
         axis.title.y = element_text(size = 20),
         legend.title = element_text(size = 20),
@@ -3467,7 +3467,7 @@ ee2 <- ggplot() +
                       labels = c("Hancock & Godfray")) +
   scale_fill_manual(values = c("#f7aa58"), 
                       labels = c("Hancock & Godfray")) +
-  ylim(0, 31000) +
+  ylim(0, 35000) +
   ggtitle("Hancock & Godfray") +
   theme(axis.title.x = element_text(size = 20),
         axis.title.y = element_text(size = 20),
@@ -3525,7 +3525,7 @@ ee4 <- ggplot() +
   scale_fill_manual(values = c("#e76254", "#f7aa58", "#72bcd5"), 
                       labels = c("Modified Nisbet \n & Gurney", "Hancock & Godfray", "White et al.")) +
   ggtitle("Modified Nisbet & Gurney") +
-  ylim(0, 91000) +
+  ylim(0, 150000) +
   theme(axis.title.x = element_text(size = 20),
         axis.title.y = element_text(size = 20),
         legend.title = element_text(size = 20),
@@ -3549,7 +3549,7 @@ ee5 <- ggplot() +
          filter(state == "Larval") %>% filter(model == "H&G")) +
   #facet_wrap(~model, scales = "free", labeller = as_labeller(c("H&G" = "Hancock & Godfray", "Modified N&G" = #"Modified Nisbet & Gurney", "White" = "White et al."))) +
   theme_bw() +
-  ylim(0, 91000) +
+  ylim(0, 150000) +
   scale_colour_manual(values = c("#f7aa58"), 
                       labels = c("Hancock & Godfray")) +
   scale_fill_manual(values = c("#f7aa58"), 
@@ -3582,7 +3582,7 @@ ee6 <- ggplot() +
                       labels = c("White et al.")) +
   scale_fill_manual(values = c("#72bcd5"), 
                       labels = c("White et al.")) +
-  ylim(0, 91000) +
+  ylim(0, 150000) +
   ggtitle("White et al.") +
   theme(axis.title.x = element_text(size = 20),
         axis.title.y = element_text(size = 20),
@@ -3605,6 +3605,8 @@ wrap_elements(ee1 + ee2 + ee3 + plot_annotation(subtitle = "Average Long-term Ad
 
 for_plot_adults_mal <- pivot_wider(for_plot_adults, names_from = state, values_from = equi_value) %>% group_by(model) %>% mutate(prop_adult = Adult/Adult[modi == 1]) 
 
+for_plot_adults_mal$model <- factor(for_plot_adults_mal$model, levels = c("Modified N&G", "H&G", "White"))
+
 eta_kappa_test_smallrange <- test_variable_ddf_5(variable = "eta_kappa", 
                                            min = 0, 
                                            max = 2, 
@@ -3624,7 +3626,7 @@ jj6 <- ggplot(data = for_plot_adults_mal) +
   geom_point(
     aes(x = 1-modi, y = prop_adult*seq(0,1,0.005), colour = model)) + 
   theme_bw() +
-  scale_colour_manual(values = c("#e76254", "#f7aa58","#72bcd5"), 
+  scale_colour_manual(values = c("#e76254", "#f7aa58","#72bcd5"),
                       labels = c("Modified Nisbet \n & Gurney", "Hancock & Godfray", "White et al.")) +
   ggtitle(expression(paste(bold("Long-term Proportion of Adult Female "), bolditalic("Anopheles"), bold(" able to spread Malaria")))) +
   theme(axis.title.x = element_text(size = 15),
@@ -3686,7 +3688,7 @@ ee7 <- ggplot(data = model_runs_for_plot_3 %>%
   scale_fill_manual(values = c("#e76254", "#f7aa58", "#72bcd5"), 
                       labels = c("Modified Nisbet \n & Gurney", "Hancock & Godfray", "White et al.")) +
   ggtitle("Modified Nisbet & Gurney") +
-  ylim(0, 31000) +
+  ylim(0, 35000) +
   theme(axis.title.x = element_text(size = 20),
         axis.title.y = element_text(size = 20),
         legend.title = element_text(size = 20),
@@ -3710,7 +3712,7 @@ ee8 <- ggplot(data = model_runs_for_plot_3 %>%
   scale_colour_manual(values = c("#f7aa58"), 
                       labels = c("Hancock & Godfray")) +
   ggtitle("Hancock & Godfray") +
-  ylim(0, 31000) +
+  ylim(0, 35000) +
   theme(axis.title.x = element_text(size = 20),
         axis.title.y = element_text(size = 20),
         legend.title = element_text(size = 20),
@@ -3747,7 +3749,7 @@ ee9 <- ggplot(data = model_runs_for_plot_3 %>%
        y = "Number",
        colour = 'Model')
 
-ee7 + ee8 + ee9 + plot_annotation(subtitle = "Average Long-term Adult population", tag_levels = list(c("A", "B", "C"))) & theme(plot.subtitle = element_text(size = 30), plot.tag = element_text(size = 22.5, face = "bold"))
+#ee7 + ee8 + ee9 + plot_annotation(subtitle = "Average Long-term Adult population", tag_levels = list(c("A", "B", "C"))) & theme(plot.subtitle = element_text(size = 30), plot.tag = element_text(size = 22.5, face = "bold"))
 
 ee10 <- ggplot(data = model_runs_for_plot_3 %>%
          filter(state == "Larval") %>% filter(model == "Modified N&G")) +
@@ -3760,7 +3762,7 @@ ee10 <- ggplot(data = model_runs_for_plot_3 %>%
                       labels = c("Modified Nisbet \n & Gurney", "Hancock & Godfray", "White et al.")) +
   scale_fill_manual(values = c("#e76254", "#f7aa58", "#72bcd5"), 
                       labels = c("Modified Nisbet \n & Gurney", "Hancock & Godfray", "White et al.")) +
-  ylim(0, 91000) +
+  ylim(0, 150000) +
   ggtitle("Modified Nisbet & Gurney") +
   theme(axis.title.x = element_text(size = 20),
         axis.title.y = element_text(size = 20),
@@ -3785,7 +3787,7 @@ ee11 <- ggplot(data = model_runs_for_plot_3 %>%
   scale_colour_manual(values = c("#f7aa58"), 
                       labels = c("Hancock & Godfray")) +
   ggtitle("Hancock & Godfray") +
-  ylim(0, 91000) +
+  ylim(0, 150000) +
   theme(axis.title.x = element_text(size = 20),
         axis.title.y = element_text(size = 20),
         legend.title = element_text(size = 20),
@@ -3809,7 +3811,7 @@ ee12 <- ggplot(data = model_runs_for_plot_3 %>%
   scale_colour_manual(values = c("#72bcd5"), 
                       labels = c("Modified Nisbet \n & Gurney", "Hancock & Godfray", "White et al.")) +
   ggtitle("White et al.") +
-  ylim(0, 91000) +
+  ylim(0, 150000) +
   theme(axis.title.x = element_text(size = 20),
         axis.title.y = element_text(size = 20),
         legend.title = element_text(size = 20),
