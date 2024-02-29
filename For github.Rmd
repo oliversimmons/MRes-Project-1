@@ -984,7 +984,7 @@ g6 <- ggplot() +
              data = output %>% filter(state == "fecundity")) +
   theme_bw() +
   scale_colour_manual(values = scale) +
-  ggtitle(paste("Long-term Average Fecundity")) +
+  ggtitle(paste("Long-term Average per capita Fecundity")) +
  theme(axis.title.x = element_text(size = 17.5),
         axis.title.y = element_text(size = 15),
         axis.text.x = element_text(size = 13),
@@ -3195,7 +3195,7 @@ gg7 <- ggplot() +
   theme_bw() +
   ylim(5,9) +
   scale_colour_met_d(name = "Hiroshige") +
-  ggtitle(expression(paste(bold("Average Adult Fecundity")))) +
+  ggtitle(expression(paste(bold("Average per capita Fecundity")))) +
   theme(axis.title.x = element_text(size = 20),
         axis.title.y = element_text(size = 20),
         axis.text.x = element_text(size = 18),
